@@ -27,6 +27,7 @@
 #include <linux/percpu-refcount.h>
 #include <linux/scatterlist.h>
 #include <linux/blkzoned.h>
+#include <linux/nvme.h>
 
 struct module;
 struct scsi_ioctl_command;
@@ -240,6 +241,8 @@ struct request {
 		struct __call_single_data csd;
 		u64 fifo_time;
 	};
+
+	struct nvme_command _imposter_command;
 
 	/*
 	 * completion callback.

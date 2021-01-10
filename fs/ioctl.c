@@ -762,6 +762,27 @@ SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 	return ksys_ioctl(fd, cmd, arg);
 }
 
+SYSCALL_DEFINE2(imposter, int, fd, int, level)
+{
+	struct fd f = fdget_pos(fd);
+	long ret = -EBADF;
+
+	if (f.file) {
+		f.file->_imposter_level = level;
+		fdput_pos(f);
+		ret = 0;
+	} else {
+		printk("imposter: bad file descriptor\n");
+	}
+
+	return ret;
+}
+
+SYSCALL_DEFINE0(init_imposter)
+{
+	return 0;
+}
+
 #ifdef CONFIG_COMPAT
 /**
  * compat_ptr_ioctl - generic implementation of .compat_ioctl file operation
