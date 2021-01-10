@@ -966,16 +966,20 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 	req = blk_mq_tag_to_rq(nvme_queue_tagset(nvmeq), cqe->command_id);
 	trace_nvme_sq(req, cqe->sq_head, nvmeq->sq_tail);
 
-	++req->bio->_imposter_count;
-	if (req->bio->_imposter_level > 0 && req->bio->_imposter_count < req->bio->_imposter_level) {
-		_index = req->bio->bi_iter.bi_sector >> (12 - 9);
-		_index = (_index * 1103515245 + 12345) % (1 << 23);
-		req->bio->bi_iter.bi_sector = _index << (12 - 9);
-		req->__sector = req->bio->bi_iter.bi_sector;
-		req->_imposter_command.rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
-		nvme_submit_cmd(nvmeq, &req->_imposter_command, true);
-	} else {
+	if (!req->bio || req->bio->_imposter_level == 0) {
 		nvme_end_request(req, cqe->status, cqe->result);
+	} else {
+		++req->bio->_imposter_count;
+		if (req->bio->_imposter_count < req->bio->_imposter_level) {
+			_index = req->bio->bi_iter.bi_sector >> (12 - 9);
+			_index = (_index * 1103515245 + 12345) % (1 << 23);
+			req->bio->bi_iter.bi_sector = _index << (12 - 9);
+			req->__sector = req->bio->bi_iter.bi_sector;
+			req->_imposter_command.rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
+			nvme_submit_cmd(nvmeq, &req->_imposter_command, true);
+		} else {
+			nvme_end_request(req, cqe->status, cqe->result);
+		}
 	}
 }
 
