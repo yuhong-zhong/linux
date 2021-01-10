@@ -614,7 +614,48 @@ ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
 
 SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 {
-	return ksys_read(fd, buf, count);
+	struct fd f;
+	int _imposter_level;
+	loff_t pos, *ppos
+
+	/* check imposter info */
+	f = fdget_pos(fd);
+	if (!f.file) {
+		return -EBADF;
+	}
+	_imposter_level = f.file->_imposter_level;
+	ppos = file_ppos(f.file);
+	if (ppos) {
+		pos = *ppos;
+	}
+	fdput_pos(f);
+
+	if (_imposter_level == 0) {
+		/* normal read */
+		return ksys_read(fd, buf, count);
+	} else {
+		/* imposter read */
+		if (!ppos) {
+			printk("imposter read: invalid offset\n");
+			return -EBADF;
+		}
+		long index = pos >> 12;
+		int i;
+		for (i = 0; i < _imposter_level; ++i) {
+			off_t lseek_ret = ksys_lseek(fd, index << 12, SEEK_SET);
+			if (lseek_ret != index << 12) {
+				printk("imposter read: ksys_lseek failed\n");
+				return -EBADF;
+			}
+			ssize_t read_ret = ksys_read(fd, buf, count);
+			if (read_ret != count) {
+				printk("imposter read: ksys_read failed\n");
+				return -EBADF;
+			}
+			index = (index * 1103515245 + 12345) % (1 << 23);
+		}
+		return count;
+	}
 }
 
 ssize_t ksys_write(unsigned int fd, const char __user *buf, size_t count)

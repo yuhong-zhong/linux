@@ -469,15 +469,14 @@ static inline void nvme_write_sq_db(struct nvme_queue *nvmeq)
 static void nvme_submit_cmd(struct nvme_queue *nvmeq, struct nvme_command *cmd,
 			    bool write_sq)
 {
-	unsigned long flags;
-	spin_lock_irqsave(&nvmeq->sq_lock, flags);
+	spin_lock(&nvmeq->sq_lock);
 	memcpy(nvmeq->sq_cmds + (nvmeq->sq_tail << nvmeq->sqes),
 	       cmd, sizeof(*cmd));
 	if (++nvmeq->sq_tail == nvmeq->q_depth)
 		nvmeq->sq_tail = 0;
 	if (write_sq)
 		nvme_write_sq_db(nvmeq);
-	spin_unlock_irqrestore(&nvmeq->sq_lock, flags);
+	spin_unlock(&nvmeq->sq_lock);
 }
 
 static void nvme_commit_rqs(struct blk_mq_hw_ctx *hctx)
@@ -942,7 +941,6 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 {
 	struct nvme_completion *cqe = &nvmeq->cqes[idx];
 	struct request *req;
-	long _index;
 
 	if (unlikely(cqe->command_id >= nvmeq->q_depth)) {
 		dev_warn(nvmeq->dev->ctrl.device,
@@ -965,18 +963,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 
 	req = blk_mq_tag_to_rq(nvme_queue_tagset(nvmeq), cqe->command_id);
 	trace_nvme_sq(req, cqe->sq_head, nvmeq->sq_tail);
-
-	++req->bio->_imposter_count;
-	if (req->bio->_imposter_level > 0 && req->bio->_imposter_count < req->bio->_imposter_level) {
-		_index = req->bio->bi_iter.bi_sector >> (12 - 9);
-		_index = (_index * 1103515245 + 12345) % (1 << 23);
-		req->bio->bi_iter.bi_sector = _index << (12 - 9);
-		req->__sector = req->bio->bi_iter.bi_sector;
-		req->_imposter_command.rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
-		nvme_submit_cmd(nvmeq, &req->_imposter_command, true);
-	} else {
-		nvme_end_request(req, cqe->status, cqe->result);
-	}
+	nvme_end_request(req, cqe->status, cqe->result);
 }
 
 static inline void nvme_update_cq_head(struct nvme_queue *nvmeq)
