@@ -616,7 +616,7 @@ SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 {
 	struct fd f;
 	int _imposter_level;
-	loff_t pos, *ppos
+	loff_t pos, *ppos;
 
 	/* check imposter info */
 	f = fdget_pos(fd);
