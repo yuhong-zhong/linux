@@ -39,6 +39,7 @@
 #include <linux/fs_types.h>
 #include <linux/build_bug.h>
 #include <linux/stddef.h>
+#include <linux/hrtimer.h>
 
 #include <asm/byteorder.h>
 #include <uapi/linux/fs.h>
@@ -951,6 +952,8 @@ struct file {
 	const struct file_operations	*f_op;
 
 	int _imposter_level;
+	ktime_t _imposter_sub_start;
+	ktime_t _imposter_comp_start;
 
 	/*
 	 * Protects f_ep_links, f_flags.

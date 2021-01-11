@@ -21,6 +21,7 @@
 #include <linux/nvme_ioctl.h>
 #include <linux/pm_qos.h>
 #include <asm/unaligned.h>
+#include <linux/hrtimer.h>
 
 #include "nvme.h"
 #include "fabrics.h"
@@ -773,6 +774,12 @@ blk_status_t nvme_setup_cmd(struct nvme_ns *ns, struct request *req,
 
 	cmd->common.command_id = req->tag;
 	trace_nvme_setup_cmd(req, cmd);
+
+	if (req->bio && req->bio->_imposter_level > 0) {
+		long _index = atomic_long_fetch_inc(&_imposter_sub_index) % _IMPOSTER_ARR_SIZE;
+		WRITE_ONCE(_imposter_sub[_index], ktime_sub(ktime_get(), req->bio->_imposter_sub_start));
+	}
+
 	return ret;
 }
 EXPORT_SYMBOL_GPL(nvme_setup_cmd);

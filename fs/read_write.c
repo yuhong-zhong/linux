@@ -21,6 +21,7 @@
 #include <linux/mount.h>
 #include <linux/fs.h>
 #include "internal.h"
+#include <linux/hrtimer.h>
 
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
@@ -599,6 +600,9 @@ ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
 	ssize_t ret = -EBADF;
 
 	if (f.file) {
+		if (f.file->_imposter_level > 0) {
+			f.file->_imposter_sub_start = ktime_get();
+		}
 		loff_t pos, *ppos = file_ppos(f.file);
 		if (ppos) {
 			pos = *ppos;
@@ -607,6 +611,11 @@ ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
 		ret = vfs_read(f.file, buf, count, ppos);
 		if (ret >= 0 && ppos)
 			f.file->f_pos = pos;
+		if (f.file->_imposter_level > 0) {
+			long _index = atomic_long_fetch_inc(&_imposter_comp_index) % _IMPOSTER_ARR_SIZE;
+			WRITE_ONCE(_imposter_comp[_index], ktime_sub(ktime_get(), 
+			f.file->_imposter_comp_start));
+		}
 		fdput_pos(f);
 	}
 	return ret;

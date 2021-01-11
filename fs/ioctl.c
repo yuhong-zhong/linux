@@ -762,6 +762,11 @@ SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 	return ksys_ioctl(fd, cmd, arg);
 }
 
+long *_imposter_sub;
+long *_imposter_comp;
+atomic_long_t _imposter_sub_index;
+atomic_long_t _imposter_comp_index;
+
 SYSCALL_DEFINE2(imposter, int, fd, int, level)
 {
 	struct fd f = fdget_pos(fd);
@@ -780,7 +785,45 @@ SYSCALL_DEFINE2(imposter, int, fd, int, level)
 
 SYSCALL_DEFINE0(init_imposter)
 {
-	return 0;
+	long i;
+
+	_imposter_sub = malloc(_IMPOSTER_ARR_SIZE * sizeof(long));
+	if (!_imposter_sub) {
+		printk("cannot allocate buffer for _imposter_sub\n");
+	}
+
+	_imposter_comp = malloc(_IMPOSTER_ARR_SIZE * sizeof(long));
+	if (!_imposter_comp) {
+		printk("cannot allocate buffer for _imposter_comp\n");
+	}
+
+	for (i = 0; i < _IMPOSTER_ARR_SIZE; ++i) {
+		_imposter_sub[i] = -1;
+		_imposter_comp[i] = -1;
+	}
+
+	atomic_long_set(&_imposter_sub_index, 0);
+	atomic_long_set(&_imposter_comp_index, 0);
+}
+
+SYSCALL_DEFINE1(imposter_sub, long, index)
+{
+	if (index < 0 || index >= _IMPOSTER_ARR_SIZE) {
+		printk("imposter_sub: invalid index\n");
+		return -1;
+	}
+
+	return READ_ONCE(_imposter_sub[index]);
+}
+
+SYSCALL_DEFINE1(imposter_comp, long, index)
+{
+	if (index < 0 || index >= _IMPOSTER_ARR_SIZE) {
+		printk("imposter_comp: invalid index\n");
+		return -1;
+	}
+
+	return READ_ONCE(_imposter_comp[index]);
 }
 
 #ifdef CONFIG_COMPAT

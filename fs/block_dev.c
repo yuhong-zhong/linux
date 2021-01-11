@@ -230,6 +230,8 @@ __blkdev_direct_IO_simple(struct kiocb *iocb, struct iov_iter *iter,
 	bio.bi_private = current;
 	bio.bi_end_io = blkdev_bio_end_io_simple;
 	bio.bi_ioprio = iocb->ki_ioprio;
+	bio._imposter_sub_start = file->_imposter_sub_start;
+	bio._imposter_level = file->_imposter_level;
 
 	ret = bio_iov_iter_get_pages(&bio, iter);
 	if (unlikely(ret))
@@ -257,6 +259,8 @@ __blkdev_direct_IO_simple(struct kiocb *iocb, struct iov_iter *iter,
 			blk_io_schedule();
 	}
 	__set_current_state(TASK_RUNNING);
+
+	file._imposter_comp_start = bio._imposter_comp_start;
 
 	bio_release_pages(&bio, should_dirty);
 	if (unlikely(bio.bi_status))
@@ -298,6 +302,8 @@ static void blkdev_bio_end_io(struct bio *bio)
 {
 	struct blkdev_dio *dio = bio->bi_private;
 	bool should_dirty = dio->should_dirty;
+
+	dio->iocb->ki_filp->_imposter_comp_start = bio->_imposter_comp_start;
 
 	if (bio->bi_status && !dio->bio.bi_status)
 		dio->bio.bi_status = bio->bi_status;
@@ -381,6 +387,8 @@ __blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter, int nr_pages)
 		bio->bi_private = dio;
 		bio->bi_end_io = blkdev_bio_end_io;
 		bio->bi_ioprio = iocb->ki_ioprio;
+		bio->_imposter_sub_start = file->_imposter_sub_start;
+		bio->_imposter_level = file->_imposter_level;
 
 		ret = bio_iov_iter_get_pages(bio, iter);
 		if (unlikely(ret)) {

@@ -211,6 +211,10 @@ struct bio {
 
 	struct bio_set		*bi_pool;
 
+	int _imposter_level;
+	ktime_t _imposter_sub_start;
+	ktime_t _imposter_comp_start;
+
 	/*
 	 * We can inline a number of vecs at the end of the bio, to avoid
 	 * double allocations for a small number of bio_vecs. This member

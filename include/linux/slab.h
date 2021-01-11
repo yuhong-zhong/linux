@@ -135,6 +135,12 @@
 
 #include <linux/kasan.h>
 
+#define _IMPOSTER_ARR_SIZE 3750000
+extern long *_imposter_sub;
+extern long *_imposter_comp;
+extern atomic_t _imposter_sub_index;
+extern atomic_t _imposter_comp_index;
+
 struct mem_cgroup;
 /*
  * struct kmem_cache related prototypes
