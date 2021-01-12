@@ -763,9 +763,13 @@ SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 }
 
 long *_imposter_sub;
+EXPORT_SYMBOL(_imposter_sub);
 long *_imposter_comp;
+EXPORT_SYMBOL(_imposter_comp);
 atomic_long_t _imposter_sub_index;
+EXPORT_SYMBOL(_imposter_sub_index);
 atomic_long_t _imposter_comp_index;
+EXPORT_SYMBOL(_imposter_comp_index);
 
 SYSCALL_DEFINE2(imposter, int, fd, int, level)
 {
