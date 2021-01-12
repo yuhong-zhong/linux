@@ -810,7 +810,7 @@ SYSCALL_DEFINE0(init_imposter)
 
 	atomic_long_set(&_imposter_sub_index, 0);
 	atomic_long_set(&_imposter_comp_index, 0);
-	
+
 	return 0;
 }
 
