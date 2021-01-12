@@ -260,7 +260,7 @@ __blkdev_direct_IO_simple(struct kiocb *iocb, struct iov_iter *iter,
 	}
 	__set_current_state(TASK_RUNNING);
 
-	file._imposter_comp_start = bio._imposter_comp_start;
+	file->_imposter_comp_start = bio._imposter_comp_start;
 
 	bio_release_pages(&bio, should_dirty);
 	if (unlikely(bio.bi_status))
