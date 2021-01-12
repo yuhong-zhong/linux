@@ -613,8 +613,7 @@ ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
 			f.file->f_pos = pos;
 		if (f.file->_imposter_level > 0) {
 			long _index = atomic_long_fetch_inc(&_imposter_comp_index) % _IMPOSTER_ARR_SIZE;
-			WRITE_ONCE(_imposter_comp[_index], ktime_sub(ktime_get(), 
-			f.file->_imposter_comp_start));
+			WRITE_ONCE(_imposter_comp[_index], ktime_sub(ktime_get(), f.file->_imposter_comp_start));
 		}
 		fdput_pos(f);
 	}
