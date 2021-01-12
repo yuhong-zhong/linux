@@ -787,12 +787,12 @@ SYSCALL_DEFINE0(init_imposter)
 {
 	long i;
 
-	_imposter_sub = malloc(_IMPOSTER_ARR_SIZE * sizeof(long));
+	_imposter_sub = kmalloc(_IMPOSTER_ARR_SIZE * sizeof(long), GFP_KERNEL);
 	if (!_imposter_sub) {
 		printk("cannot allocate buffer for _imposter_sub\n");
 	}
 
-	_imposter_comp = malloc(_IMPOSTER_ARR_SIZE * sizeof(long));
+	_imposter_comp = kmalloc(_IMPOSTER_ARR_SIZE * sizeof(long), GFP_KERNEL);
 	if (!_imposter_comp) {
 		printk("cannot allocate buffer for _imposter_comp\n");
 	}
