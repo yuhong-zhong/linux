@@ -650,10 +650,12 @@ SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 		long index = pos >> 12;
 		int i;
 		for (i = 0; i < _imposter_level; ++i) {
-			off_t lseek_ret = ksys_lseek(fd, index << 12, SEEK_SET);
-			if (lseek_ret != index << 12) {
-				printk("imposter read: ksys_lseek failed\n");
-				return -EBADF;
+			if (i > 0) {
+				off_t lseek_ret = ksys_lseek(fd, index << 12, SEEK_SET);
+				if (lseek_ret != index << 12) {
+					printk("imposter read: ksys_lseek failed\n");
+					return -EBADF;
+				}
 			}
 			ssize_t read_ret = ksys_read(fd, buf, count);
 			if (read_ret != count) {
