@@ -136,10 +136,16 @@
 #include <linux/kasan.h>
 
 #define _IMPOSTER_ARR_SIZE 3750000
-extern long *_imposter_sub;
-extern long *_imposter_comp;
-extern atomic_long_t _imposter_sub_index;
-extern atomic_long_t _imposter_comp_index;
+extern long *_imposter_device;
+extern long *_imposter_nvme_driver;
+extern long *_imposter_bio;
+extern long *_imposter_fs;
+extern long *_imposter_syscall;
+extern atomic_long_t _imposter_device_index;
+extern atomic_long_t _imposter_nvme_driver_index;
+extern atomic_long_t _imposter_bio_index;
+extern atomic_long_t _imposter_fs_index;
+extern atomic_long_t _imposter_syscall_index;
 
 struct mem_cgroup;
 /*

@@ -762,14 +762,27 @@ SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 	return ksys_ioctl(fd, cmd, arg);
 }
 
-long *_imposter_sub;
-EXPORT_SYMBOL(_imposter_sub);
-long *_imposter_comp;
-EXPORT_SYMBOL(_imposter_comp);
-atomic_long_t _imposter_sub_index;
-EXPORT_SYMBOL(_imposter_sub_index);
-atomic_long_t _imposter_comp_index;
-EXPORT_SYMBOL(_imposter_comp_index);
+long *_imposter_device;
+EXPORT_SYMBOL(_imposter_device);
+long *_imposter_nvme_driver;
+EXPORT_SYMBOL(_imposter_nvme_driver);
+long *_imposter_bio;
+EXPORT_SYMBOL(_imposter_bio);
+long *_imposter_fs;
+EXPORT_SYMBOL(_imposter_fs);
+long *_imposter_syscall;
+EXPORT_SYMBOL(_imposter_syscall);
+
+atomic_long_t _imposter_device_index;
+EXPORT_SYMBOL(_imposter_device_index);
+atomic_long_t _imposter_nvme_driver_index;
+EXPORT_SYMBOL(_imposter_nvme_driver_index);
+atomic_long_t _imposter_bio_index;
+EXPORT_SYMBOL(_imposter_bio_index);
+atomic_long_t _imposter_fs_index;
+EXPORT_SYMBOL(_imposter_fs_index);
+atomic_long_t _imposter_syscall_index;
+EXPORT_SYMBOL(_imposter_syscall_index);
 
 SYSCALL_DEFINE2(imposter, int, fd, int, level)
 {
@@ -791,47 +804,84 @@ SYSCALL_DEFINE0(init_imposter)
 {
 	long i;
 
-	_imposter_sub = vmalloc(_IMPOSTER_ARR_SIZE * sizeof(long));
-	if (!_imposter_sub) {
-		printk("cannot allocate buffer for _imposter_sub\n");
-        return -ENOMEM;
+	_imposter_device = vmalloc(_IMPOSTER_ARR_SIZE * sizeof(long));
+	if (!_imposter_device) {
+		printk("cannot allocate buffer for _imposter_device\n");
+	        return -ENOMEM;
 	}
-
-	_imposter_comp = vmalloc(_IMPOSTER_ARR_SIZE * sizeof(long));
-	if (!_imposter_comp) {
-		printk("cannot allocate buffer for _imposter_comp\n");
-        return -ENOMEM;
+	_imposter_nvme_driver = vmalloc(_IMPOSTER_ARR_SIZE * sizeof(long));
+	if (!_imposter_nvme_driver) {
+		printk("cannot allocate buffer for _imposter_nvme_driver\n");
+	        return -ENOMEM;
+	}
+	_imposter_bio = vmalloc(_IMPOSTER_ARR_SIZE * sizeof(long));
+	if (!_imposter_bio) {
+		printk("cannot allocate buffer for _imposter_bio\n");
+	        return -ENOMEM;
+	}
+	_imposter_fs = vmalloc(_IMPOSTER_ARR_SIZE * sizeof(long));
+	if (!_imposter_fs) {
+		printk("cannot allocate buffer for _imposter_fs\n");
+	        return -ENOMEM;
+	}
+	_imposter_syscall = vmalloc(_IMPOSTER_ARR_SIZE * sizeof(long));
+	if (!_imposter_syscall) {
+		printk("cannot allocate buffer for _imposter_syscall\n");
+	        return -ENOMEM;
 	}
 
 	for (i = 0; i < _IMPOSTER_ARR_SIZE; ++i) {
-		_imposter_sub[i] = -1;
-		_imposter_comp[i] = -1;
+		_imposter_device[i] = -1;
+		_imposter_nvme_driver[i] = -1;
+		_imposter_bio[i] = -1;
+		_imposter_fs[i] = -1;
+		_imposter_syscall[i] = -1;
 	}
 
-	atomic_long_set(&_imposter_sub_index, 0);
-	atomic_long_set(&_imposter_comp_index, 0);
+	atomic_long_set(&_imposter_device_index, 0);
+	atomic_long_set(&_imposter_nvme_driver_index, 0);
+	atomic_long_set(&_imposter_bio_index, 0);
+	atomic_long_set(&_imposter_fs_index, 0);
+	atomic_long_set(&_imposter_syscall_index, 0);
 
 	return 0;
 }
 
-SYSCALL_DEFINE1(imposter_sub, long, index)
+SYSCALL_DEFINE2(get_imposter, int, type, long, index)
 {
 	if (index < 0 || index >= _IMPOSTER_ARR_SIZE) {
-		printk("imposter_sub: invalid index\n");
+		printk("get_imposter: invalid index\n");
 		return -1;
 	}
 
-	return READ_ONCE(_imposter_sub[index]);
-}
-
-SYSCALL_DEFINE1(imposter_comp, long, index)
-{
-	if (index < 0 || index >= _IMPOSTER_ARR_SIZE) {
-		printk("imposter_comp: invalid index\n");
+	if (type < 0 || type >= 5) {
+		printk("get_imposter: invalid type\n");
 		return -1;
 	}
 
-	return READ_ONCE(_imposter_comp[index]);
+	long value;
+	switch (type) {
+	case 0:
+		value = READ_ONCE(_imposter_device[index]);
+		break;
+	case 1:
+		value = READ_ONCE(_imposter_nvme_driver[index]);
+		break;
+	case 2:
+		value = READ_ONCE(_imposter_bio[index]);
+		break;
+	case 3:
+		value = READ_ONCE(_imposter_fs[index]);
+		break;
+	case 4:
+		value = READ_ONCE(_imposter_syscall[index]);
+		break;
+	default:
+		printk("get_imposter: unrecognized type\n");
+		value = -1;
+	}
+
+	return value;
 }
 
 #ifdef CONFIG_COMPAT

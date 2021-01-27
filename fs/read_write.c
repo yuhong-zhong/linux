@@ -600,9 +600,6 @@ ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
 	ssize_t ret = -EBADF;
 
 	if (f.file) {
-		if (f.file->_imposter_level > 0) {
-			f.file->_imposter_sub_start = ktime_get();
-		}
 		loff_t pos, *ppos = file_ppos(f.file);
 		if (ppos) {
 			pos = *ppos;
@@ -611,10 +608,6 @@ ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
 		ret = vfs_read(f.file, buf, count, ppos);
 		if (ret >= 0 && ppos)
 			f.file->f_pos = pos;
-		if (f.file->_imposter_level > 0) {
-			long _index = atomic_long_fetch_inc(&_imposter_comp_index) % _IMPOSTER_ARR_SIZE;
-			WRITE_ONCE(_imposter_comp[_index], ktime_sub(ktime_get(), f.file->_imposter_comp_start));
-		}
 		fdput_pos(f);
 	}
 	return ret;
@@ -643,6 +636,8 @@ SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 		return ksys_read(fd, buf, count);
 	} else {
 		/* imposter read */
+		ktime_t _imposter_syscall_start = ktime_get();
+
 		if (!ppos) {
 			printk("imposter read: invalid offset\n");
 			return -EBADF;
@@ -664,6 +659,9 @@ SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 			}
 			index = (index * 1103515245 + 12345) % (1 << 23);
 		}
+
+		long _index = atomic_long_fetch_inc(&_imposter_syscall_index) % _IMPOSTER_ARR_SIZE;
+		WRITE_ONCE(_imposter_syscall[_index], ktime_sub(ktime_get(), _imposter_syscall_start));
 		return count;
 	}
 }

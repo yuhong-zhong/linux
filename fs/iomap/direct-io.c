@@ -67,6 +67,11 @@ static void iomap_dio_submit_bio(struct iomap_dio *dio, struct iomap *iomap,
 		bio_set_polled(bio, dio->iocb);
 
 	dio->submit.last_queue = bdev_get_queue(iomap->bdev);
+
+	if (bio && bio->_imposter_level > 0) {
+		bio->_imposter_bio_start = ktime_get();
+	}
+
 	if (dio->dops && dio->dops->submit_io)
 		dio->submit.cookie = dio->dops->submit_io(
 				file_inode(dio->iocb->ki_filp),
@@ -153,7 +158,10 @@ static void iomap_dio_bio_end_io(struct bio *bio)
 	struct iomap_dio *dio = bio->bi_private;
 	bool should_dirty = (dio->flags & IOMAP_DIO_DIRTY);
 
-	dio->iocb->ki_filp->_imposter_comp_start = bio->_imposter_comp_start;
+	if (bio && bio->_imposter_level > 0) {
+		long _index = atomic_long_fetch_inc(&_imposter_bio_index) % _IMPOSTER_ARR_SIZE;
+		WRITE_ONCE(_imposter_bio[_index], ktime_sub(ktime_get(), bio->_imposter_bio_start));
+	}
 
 	if (bio->bi_status)
 		iomap_dio_set_error(dio, blk_status_to_errno(bio->bi_status));
@@ -278,7 +286,6 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		bio->bi_ioprio = dio->iocb->ki_ioprio;
 		bio->bi_private = dio;
 		bio->bi_end_io = iomap_dio_bio_end_io;
-		bio->_imposter_sub_start = dio->iocb->ki_filp->_imposter_sub_start;
 		bio->_imposter_level = dio->iocb->ki_filp->_imposter_level;
 
 		ret = bio_iov_iter_get_pages(bio, dio->submit.iter);

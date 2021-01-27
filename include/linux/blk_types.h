@@ -212,8 +212,9 @@ struct bio {
 	struct bio_set		*bi_pool;
 
 	int _imposter_level;
-	ktime_t _imposter_sub_start;
-	ktime_t _imposter_comp_start;
+	ktime_t _imposter_device_start;
+	ktime_t _imposter_nvme_driver_start;
+	ktime_t _imposter_bio_start;
 
 	/*
 	 * We can inline a number of vecs at the end of the bio, to avoid

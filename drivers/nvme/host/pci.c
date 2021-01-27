@@ -468,8 +468,11 @@ static inline void nvme_write_sq_db(struct nvme_queue *nvmeq)
  * @write_sq: whether to write to the SQ doorbell
  */
 static void nvme_submit_cmd(struct nvme_queue *nvmeq, struct nvme_command *cmd,
-			    bool write_sq)
+			    bool write_sq, struct request *req)
 {
+	if (req->bio && req->bio->_imposter_level > 0) {
+		req->bio->_imposter_device_start = ktime_get();
+	}
 	spin_lock(&nvmeq->sq_lock);
 	memcpy(nvmeq->sq_cmds + (nvmeq->sq_tail << nvmeq->sqes),
 	       cmd, sizeof(*cmd));
@@ -864,6 +867,10 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	struct nvme_command cmnd;
 	blk_status_t ret;
 
+	if (req->bio && req->bio->_imposter_level > 0) {
+		req->bio->_imposter_nvme_driver_start = ktime_get();
+	}
+
 	iod->aborted = 0;
 	iod->npages = -1;
 	iod->nents = 0;
@@ -892,7 +899,7 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	}
 
 	blk_mq_start_request(req);
-	nvme_submit_cmd(nvmeq, &cmnd, bd->last);
+	nvme_submit_cmd(nvmeq, &cmnd, bd->last, req);
 	return BLK_STS_OK;
 out_unmap_data:
 	nvme_unmap_data(dev, req);
@@ -965,7 +972,8 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 	req = blk_mq_tag_to_rq(nvme_queue_tagset(nvmeq), cqe->command_id);
 
 	if (req->bio && req->bio->_imposter_level > 0) {
-		req->bio->_imposter_comp_start = ktime_get();
+		long _index = atomic_long_fetch_inc(&_imposter_device_index) % _IMPOSTER_ARR_SIZE;
+		WRITE_ONCE(_imposter_device[_index], ktime_sub(ktime_get(), req->bio->_imposter_device_start));
 	}
 
 	trace_nvme_sq(req, cqe->sq_head, nvmeq->sq_tail);

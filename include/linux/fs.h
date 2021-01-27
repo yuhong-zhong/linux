@@ -952,8 +952,6 @@ struct file {
 	const struct file_operations	*f_op;
 
 	int _imposter_level;
-	ktime_t _imposter_sub_start;
-	ktime_t _imposter_comp_start;
 
 	/*
 	 * Protects f_ep_links, f_flags.
@@ -1904,7 +1902,16 @@ struct inode_operations {
 static inline ssize_t call_read_iter(struct file *file, struct kiocb *kio,
 				     struct iov_iter *iter)
 {
-	return file->f_op->read_iter(kio, iter);
+	ktime_t _imposter_fs_start;
+	if (file && file->_imposter_level > 0) {
+		_imposter_fs_start = ktime_get();
+	}
+	ssize_t ret = file->f_op->read_iter(kio, iter);
+	if (file && file->_imposter_level > 0) {
+		long _index = atomic_long_fetch_inc(&_imposter_fs_index) % _IMPOSTER_ARR_SIZE;
+		WRITE_ONCE(_imposter_fs[_index], ktime_sub(ktime_get(), _imposter_fs_start));
+	}
+	return ret;
 }
 
 static inline ssize_t call_write_iter(struct file *file, struct kiocb *kio,
