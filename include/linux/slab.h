@@ -135,7 +135,9 @@
 
 #include <linux/kasan.h>
 
+#ifndef _IMPOSTER_ARR_SIZE
 #define _IMPOSTER_ARR_SIZE 3750000
+#endif
 extern long *_imposter_device;
 extern long *_imposter_nvme_driver;
 extern long *_imposter_bio;

@@ -491,7 +491,7 @@ static inline void nvme_end_request(struct request *req, __le16 status,
 	/* inject error when permitted by fault injection framework */
 	nvme_should_fail(req);
 
-	if (req->bio && req->bio->_imposter_level > 0) {
+	if (req->bio && req->bio->_imposter_level > 0 && _imposter_nvme_driver) {
 		long _index = atomic_long_fetch_inc(&_imposter_nvme_driver_index) % _IMPOSTER_ARR_SIZE;
 		WRITE_ONCE(_imposter_nvme_driver[_index], ktime_sub(ktime_get(), req->bio->_imposter_nvme_driver_start));
 	}

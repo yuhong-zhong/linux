@@ -193,7 +193,7 @@ static void blkdev_bio_end_io_simple(struct bio *bio)
 {
 	struct task_struct *waiter = bio->bi_private;
 
-	if (bio && bio->_imposter_level > 0) {
+	if (bio && bio->_imposter_level > 0 && _imposter_bio) {
 		long _index = atomic_long_fetch_inc(&_imposter_bio_index) % _IMPOSTER_ARR_SIZE;
 		WRITE_ONCE(_imposter_bio[_index], ktime_sub(ktime_get(), bio->_imposter_bio_start));
 	}
@@ -306,7 +306,7 @@ static void blkdev_bio_end_io(struct bio *bio)
 	struct blkdev_dio *dio = bio->bi_private;
 	bool should_dirty = dio->should_dirty;
 
-	if (bio && bio->_imposter_level > 0) {
+	if (bio && bio->_imposter_level > 0 && _imposter_bio) {
 		long _index = atomic_long_fetch_inc(&_imposter_bio_index) % _IMPOSTER_ARR_SIZE;
 		WRITE_ONCE(_imposter_bio[_index], ktime_sub(ktime_get(), bio->_imposter_bio_start));
 	}

@@ -470,7 +470,7 @@ static inline void nvme_write_sq_db(struct nvme_queue *nvmeq)
 static void nvme_submit_cmd(struct nvme_queue *nvmeq, struct nvme_command *cmd,
 			    bool write_sq, struct request *req)
 {
-	if (req->bio && req->bio->_imposter_level > 0) {
+	if (req && req->bio && req->bio->_imposter_level > 0) {
 		req->bio->_imposter_device_start = ktime_get();
 	}
 	spin_lock(&nvmeq->sq_lock);
@@ -971,7 +971,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 
 	req = blk_mq_tag_to_rq(nvme_queue_tagset(nvmeq), cqe->command_id);
 
-	if (req->bio && req->bio->_imposter_level > 0) {
+	if (req->bio && req->bio->_imposter_level > 0 && _imposter_device) {
 		long _index = atomic_long_fetch_inc(&_imposter_device_index) % _IMPOSTER_ARR_SIZE;
 		WRITE_ONCE(_imposter_device[_index], ktime_sub(ktime_get(), req->bio->_imposter_device_start));
 	}
@@ -1076,7 +1076,7 @@ static void nvme_pci_submit_async_event(struct nvme_ctrl *ctrl)
 	memset(&c, 0, sizeof(c));
 	c.common.opcode = nvme_admin_async_event;
 	c.common.command_id = NVME_AQ_BLK_MQ_DEPTH;
-	nvme_submit_cmd(nvmeq, &c, true);
+	nvme_submit_cmd(nvmeq, &c, true, NULL);
 }
 
 static int adapter_delete_queue(struct nvme_dev *dev, u8 opcode, u16 id)

@@ -660,8 +660,10 @@ SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 			index = (index * 1103515245 + 12345) % (1 << 23);
 		}
 
-		long _index = atomic_long_fetch_inc(&_imposter_syscall_index) % _IMPOSTER_ARR_SIZE;
-		WRITE_ONCE(_imposter_syscall[_index], ktime_sub(ktime_get(), _imposter_syscall_start));
+		if (_imposter_syscall) {
+			long _index = atomic_long_fetch_inc(&_imposter_syscall_index) % _IMPOSTER_ARR_SIZE;
+			WRITE_ONCE(_imposter_syscall[_index], ktime_sub(ktime_get(), _imposter_syscall_start));
+		}
 		return count;
 	}
 }

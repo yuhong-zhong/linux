@@ -44,6 +44,20 @@
 #include <asm/byteorder.h>
 #include <uapi/linux/fs.h>
 
+#ifndef _IMPOSTER_ARR_SIZE
+#define _IMPOSTER_ARR_SIZE 3750000
+#endif
+extern long *_imposter_device;
+extern long *_imposter_nvme_driver;
+extern long *_imposter_bio;
+extern long *_imposter_fs;
+extern long *_imposter_syscall;
+extern atomic_long_t _imposter_device_index;
+extern atomic_long_t _imposter_nvme_driver_index;
+extern atomic_long_t _imposter_bio_index;
+extern atomic_long_t _imposter_fs_index;
+extern atomic_long_t _imposter_syscall_index;
+
 struct backing_dev_info;
 struct bdi_writeback;
 struct bio;
@@ -1903,11 +1917,12 @@ static inline ssize_t call_read_iter(struct file *file, struct kiocb *kio,
 				     struct iov_iter *iter)
 {
 	ktime_t _imposter_fs_start;
-	if (file && file->_imposter_level > 0) {
+	ssize_t ret;
+	if (file && file->_imposter_level > 0 && _imposter_fs) {
 		_imposter_fs_start = ktime_get();
 	}
-	ssize_t ret = file->f_op->read_iter(kio, iter);
-	if (file && file->_imposter_level > 0) {
+	ret = file->f_op->read_iter(kio, iter);
+	if (file && file->_imposter_level > 0 && _imposter_fs) {
 		long _index = atomic_long_fetch_inc(&_imposter_fs_index) % _IMPOSTER_ARR_SIZE;
 		WRITE_ONCE(_imposter_fs[_index], ktime_sub(ktime_get(), _imposter_fs_start));
 	}

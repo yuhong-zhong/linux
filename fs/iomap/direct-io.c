@@ -158,7 +158,7 @@ static void iomap_dio_bio_end_io(struct bio *bio)
 	struct iomap_dio *dio = bio->bi_private;
 	bool should_dirty = (dio->flags & IOMAP_DIO_DIRTY);
 
-	if (bio && bio->_imposter_level > 0) {
+	if (bio && bio->_imposter_level > 0 && _imposter_bio) {
 		long _index = atomic_long_fetch_inc(&_imposter_bio_index) % _IMPOSTER_ARR_SIZE;
 		WRITE_ONCE(_imposter_bio[_index], ktime_sub(ktime_get(), bio->_imposter_bio_start));
 	}

@@ -862,19 +862,39 @@ SYSCALL_DEFINE2(get_imposter, int, type, long, index)
 	long value;
 	switch (type) {
 	case 0:
-		value = READ_ONCE(_imposter_device[index]);
+		if (!_imposter_device) {
+			value = -1;
+		} else {
+			value = READ_ONCE(_imposter_device[index]);
+		}
 		break;
 	case 1:
-		value = READ_ONCE(_imposter_nvme_driver[index]);
+		if (!_imposter_nvme_driver) {
+			value = -1;
+		} else {
+			value = READ_ONCE(_imposter_nvme_driver[index]);
+		}
 		break;
 	case 2:
-		value = READ_ONCE(_imposter_bio[index]);
+		if (!_imposter_bio) {
+			value = -1;
+		} else {
+			value = READ_ONCE(_imposter_bio[index]);
+		}
 		break;
 	case 3:
-		value = READ_ONCE(_imposter_fs[index]);
+		if (!_imposter_fs) {
+			value = -1;
+		} else {
+			value = READ_ONCE(_imposter_fs[index]);
+		}
 		break;
 	case 4:
-		value = READ_ONCE(_imposter_syscall[index]);
+		if (!_imposter_syscall) {
+			value = -1;
+		} else {
+			value = READ_ONCE(_imposter_syscall[index]);
+		}
 		break;
 	default:
 		printk("get_imposter: unrecognized type\n");
