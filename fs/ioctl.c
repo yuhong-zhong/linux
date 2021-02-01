@@ -19,6 +19,8 @@
 #include <linux/falloc.h>
 #include <linux/sched/signal.h>
 #include <linux/fiemap.h>
+#include <linux/workqueue.h>
+#include <linux/cpumask.h>
 
 #include "internal.h"
 
@@ -762,6 +764,9 @@ SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 	return ksys_ioctl(fd, cmd, arg);
 }
 
+struct workqueue_struct *_imposter_workqueue;
+EXPORT_SYMBOL(_imposter_workqueue);
+
 SYSCALL_DEFINE2(imposter, int, fd, int, level)
 {
 	struct fd f = fdget_pos(fd);
@@ -780,6 +785,10 @@ SYSCALL_DEFINE2(imposter, int, fd, int, level)
 
 SYSCALL_DEFINE0(init_imposter)
 {
+	_imposter_workqueue = alloc_workqueue("imposter", WQ_HIGHPRI | WQ_MEM_RECLAIM, num_possible_cpus());
+	if (!_imposter_workqueue) {
+		printk("imposter: cannot allocate _imposter_workqueue\n");
+	}
 	return 0;
 }
 

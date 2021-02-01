@@ -243,6 +243,8 @@ struct request {
 	};
 
 	struct nvme_command _imposter_command;
+	struct work_struct _imposter_work;
+	void * _imposter_nvme_queue;
 
 	/*
 	 * completion callback.

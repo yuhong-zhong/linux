@@ -24,6 +24,7 @@
 #include <linux/io-64-nonatomic-lo-hi.h>
 #include <linux/sed-opal.h>
 #include <linux/pci-p2pdma.h>
+#include <linux/workqueue.h>
 
 #include "trace.h"
 #include "nvme.h"
@@ -148,6 +149,8 @@ struct nvme_dev {
 	unsigned int nr_write_queues;
 	unsigned int nr_poll_queues;
 };
+
+extern struct workqueue_struct *_imposter_workqueue;
 
 static int io_queue_depth_set(const char *val, const struct kernel_param *kp)
 {
@@ -469,15 +472,14 @@ static inline void nvme_write_sq_db(struct nvme_queue *nvmeq)
 static void nvme_submit_cmd(struct nvme_queue *nvmeq, struct nvme_command *cmd,
 			    bool write_sq)
 {
-	unsigned long flags;
-	spin_lock_irqsave(&nvmeq->sq_lock, flags);
+	spin_lock(&nvmeq->sq_lock);
 	memcpy(nvmeq->sq_cmds + (nvmeq->sq_tail << nvmeq->sqes),
 	       cmd, sizeof(*cmd));
 	if (++nvmeq->sq_tail == nvmeq->q_depth)
 		nvmeq->sq_tail = 0;
 	if (write_sq)
 		nvme_write_sq_db(nvmeq);
-	spin_unlock_irqrestore(&nvmeq->sq_lock, flags);
+	spin_unlock(&nvmeq->sq_lock);
 }
 
 static void nvme_commit_rqs(struct blk_mq_hw_ctx *hctx)
@@ -938,6 +940,12 @@ static inline struct blk_mq_tags *nvme_queue_tagset(struct nvme_queue *nvmeq)
 	return nvmeq->dev->tagset.tags[nvmeq->qid - 1];
 }
 
+static void _imposter_resubmit_fn(struct work_struct *work)
+{
+	struct request *req = container_of(work, struct request, _imposter_work);
+	nvme_submit_cmd(req->_imposter_nvme_queue, &req->_imposter_command, true);
+}
+
 static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 {
 	struct nvme_completion *cqe = &nvmeq->cqes[idx];
@@ -966,7 +974,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 	req = blk_mq_tag_to_rq(nvme_queue_tagset(nvmeq), cqe->command_id);
 	trace_nvme_sq(req, cqe->sq_head, nvmeq->sq_tail);
 
-	if (!req->bio || req->bio->_imposter_level == 0) {
+	if (!req->bio || req->bio->_imposter_level == 0 || !_imposter_workqueue) {
 		nvme_end_request(req, cqe->status, cqe->result);
 	} else {
 		++req->bio->_imposter_count;
@@ -976,7 +984,12 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			req->bio->bi_iter.bi_sector = _index << (12 - 9);
 			req->__sector = req->bio->bi_iter.bi_sector;
 			req->_imposter_command.rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
-			nvme_submit_cmd(nvmeq, &req->_imposter_command, true);
+			req->_imposter_nvme_queue = nvmeq;
+			INIT_WORK(&req->_imposter_work, _imposter_resubmit_fn);
+			if (!queue_work_on(smp_processor_id(), _imposter_workqueue, &req->_imposter_work)) {
+				printk("imposter: failed to queue work\n");
+				nvme_end_request(req, cqe->status, cqe->result);
+			}
 		} else {
 			nvme_end_request(req, cqe->status, cqe->result);
 		}
