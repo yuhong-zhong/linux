@@ -24,6 +24,7 @@
 #include <linux/io-64-nonatomic-lo-hi.h>
 #include <linux/sed-opal.h>
 #include <linux/pci-p2pdma.h>
+#include <linux/delay.h>
 
 #include "trace.h"
 #include "nvme.h"
@@ -480,13 +481,22 @@ static void nvme_submit_cmd(struct nvme_queue *nvmeq, struct nvme_command *cmd,
 	spin_unlock_irqrestore(&nvmeq->sq_lock, flags);
 }
 
+static void _imposter_nvme_notify_cmd(struct nvme_queue *nvmeq)
+{
+	unsigned long flags;
+	spin_lock_irqsave(&nvmeq->sq_lock, flags);
+	nvme_write_sq_db(nvmeq);
+	spin_unlock_irqrestore(&nvmeq->sq_lock, flags);
+}
+
 static void nvme_commit_rqs(struct blk_mq_hw_ctx *hctx)
 {
+	unsigned long flags;
 	struct nvme_queue *nvmeq = hctx->driver_data;
 
-	spin_lock(&nvmeq->sq_lock);
+	spin_lock_irqsave(&nvmeq->sq_lock, flags);
 	nvme_write_sq_db(nvmeq);
-	spin_unlock(&nvmeq->sq_lock);
+	spin_unlock_irqrestore(&nvmeq->sq_lock, flags);
 }
 
 static void **nvme_pci_iod_list(struct request *req)
@@ -938,7 +948,7 @@ static inline struct blk_mq_tags *nvme_queue_tagset(struct nvme_queue *nvmeq)
 	return nvmeq->dev->tagset.tags[nvmeq->qid - 1];
 }
 
-static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
+static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx, int *resubmitted)
 {
 	struct nvme_completion *cqe = &nvmeq->cqes[idx];
 	struct request *req;
@@ -976,7 +986,8 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			req->bio->bi_iter.bi_sector = _index << (12 - 9);
 			req->__sector = req->bio->bi_iter.bi_sector;
 			req->_imposter_command.rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
-			nvme_submit_cmd(nvmeq, &req->_imposter_command, true);
+			nvme_submit_cmd(nvmeq, &req->_imposter_command, false);
+			(*resubmitted)++;
 		} else {
 			nvme_end_request(req, cqe->status, cqe->result);
 		}
@@ -998,6 +1009,7 @@ static inline void nvme_update_cq_head(struct nvme_queue *nvmeq)
 static inline int nvme_process_cq(struct nvme_queue *nvmeq)
 {
 	int found = 0;
+	int resubmitted = 0;
 
 	while (nvme_cqe_pending(nvmeq)) {
 		found++;
@@ -1006,12 +1018,14 @@ static inline int nvme_process_cq(struct nvme_queue *nvmeq)
 		 * the cqe requires a full read memory barrier
 		 */
 		dma_rmb();
-		nvme_handle_cqe(nvmeq, nvmeq->cq_head);
+		nvme_handle_cqe(nvmeq, nvmeq->cq_head, &resubmitted);
 		nvme_update_cq_head(nvmeq);
 	}
 
 	if (found)
 		nvme_ring_cq_doorbell(nvmeq);
+	if (resubmitted)
+		_imposter_nvme_notify_cmd(nvmeq);
 	return found;
 }
 
