@@ -78,6 +78,7 @@
 #include <linux/fs_struct.h>
 #include <linux/splice.h>
 #include <linux/task_work.h>
+#include <linux/hrtimer.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/io_uring.h>
@@ -1290,10 +1291,18 @@ static bool io_cqring_overflow_flush(struct io_ring_ctx *ctx, bool force)
 	return cqe != NULL;
 }
 
+extern atomic_long_t _imposter_completion_latency;
+extern atomic_long_t _imposter_completion_count;
+
 static void __io_cqring_fill_event(struct io_kiocb *req, long res, long cflags)
 {
 	struct io_ring_ctx *ctx = req->ctx;
 	struct io_uring_cqe *cqe;
+
+	if (req && req->file && req->file->_imposter_level > 0) {
+		atomic_long_add(ktime_sub(ktime_get(), req->rw.kiocb._imposter_completion_start), &_imposter_completion_latency);
+		atomic_long_inc(&_imposter_completion_count);
+	}
 
 	trace_io_uring_complete(ctx, req->user_data, res);
 
@@ -5755,6 +5764,9 @@ static int io_submit_sqe(struct io_kiocb *req, const struct io_uring_sqe *sqe,
 {
 	struct io_ring_ctx *ctx = req->ctx;
 	int ret;
+	if (req && req->file && req->file->_imposter_level > 0) {
+		req->rw.kiocb._imposter_submission_start = ktime_get();
+	}
 
 	/*
 	 * If we already have a head request, queue this one for async

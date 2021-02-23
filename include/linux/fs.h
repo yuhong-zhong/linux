@@ -39,6 +39,7 @@
 #include <linux/fs_types.h>
 #include <linux/build_bug.h>
 #include <linux/stddef.h>
+#include <linux/hrtimer.h>
 
 #include <asm/byteorder.h>
 #include <uapi/linux/fs.h>
@@ -330,6 +331,8 @@ struct kiocb {
 	u16			ki_hint;
 	u16			ki_ioprio; /* See linux/ioprio.h */
 	unsigned int		ki_cookie; /* for ->iopoll */
+	ktime_t			_imposter_submission_start;
+	ktime_t			_imposter_completion_start;
 
 	randomized_struct_fields_end
 };
@@ -951,6 +954,8 @@ struct file {
 	const struct file_operations	*f_op;
 
 	int _imposter_level;
+	ktime_t _imposter_submission_start;
+	ktime_t _imposter_completion_start;
 
 	/*
 	 * Protects f_ep_links, f_flags.

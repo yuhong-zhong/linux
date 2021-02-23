@@ -153,6 +153,10 @@ static void iomap_dio_bio_end_io(struct bio *bio)
 	struct iomap_dio *dio = bio->bi_private;
 	bool should_dirty = (dio->flags & IOMAP_DIO_DIRTY);
 
+	if (bio && bio->_imposter_level > 0) {
+		dio->iocb->_imposter_completion_start = bio->_imposter_completion_start;
+	}
+
 	if (bio->bi_status)
 		iomap_dio_set_error(dio, blk_status_to_errno(bio->bi_status));
 
@@ -278,6 +282,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		bio->bi_end_io = iomap_dio_bio_end_io;
 
 		bio->_imposter_level = dio->iocb->ki_filp->_imposter_level;
+		bio->_imposter_submission_start = dio->iocb->_imposter_submission_start;
 
 		ret = bio_iov_iter_get_pages(bio, dio->submit.iter);
 		if (unlikely(ret)) {

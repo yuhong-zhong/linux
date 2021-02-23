@@ -412,7 +412,16 @@ static ssize_t new_sync_read(struct file *filp, char __user *buf, size_t len, lo
 	kiocb.ki_pos = (ppos ? *ppos : 0);
 	iov_iter_init(&iter, READ, &iov, 1, len);
 
+	if (filp && filp->_imposter_level > 0) {
+		kiocb._imposter_submission_start = filp->_imposter_submission_start;
+	}
+
 	ret = call_read_iter(filp, &kiocb, &iter);
+
+	if (filp && filp->_imposter_level > 0) {
+		filp->_imposter_completion_start = kiocb._imposter_completion_start;
+	}
+
 	BUG_ON(ret == -EIOCBQUEUED);
 	if (ppos)
 		*ppos = kiocb.ki_pos;
@@ -593,6 +602,9 @@ static inline loff_t *file_ppos(struct file *file)
 	return file->f_mode & FMODE_STREAM ? NULL : &file->f_pos;
 }
 
+extern atomic_long_t _imposter_completion_latency;
+extern atomic_long_t _imposter_completion_count;
+
 ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
 {
 	struct fd f = fdget_pos(fd);
@@ -604,7 +616,14 @@ ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
 			pos = *ppos;
 			ppos = &pos;
 		}
+		if (f.file->_imposter_level > 0) {
+			f.file->_imposter_submission_start = ktime_get();
+		}
 		ret = vfs_read(f.file, buf, count, ppos);
+		if (f.file->_imposter_level > 0) {
+			atomic_long_add(ktime_sub(ktime_get(), f.file->_imposter_completion_start), &_imposter_completion_latency);
+			atomic_long_inc(&_imposter_completion_count);
+		}
 		if (ret >= 0 && ppos)
 			f.file->f_pos = pos;
 		fdput_pos(f);

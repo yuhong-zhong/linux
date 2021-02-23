@@ -467,7 +467,7 @@ static inline void nvme_write_sq_db(struct nvme_queue *nvmeq)
  * @write_sq: whether to write to the SQ doorbell
  */
 static void nvme_submit_cmd(struct nvme_queue *nvmeq, struct nvme_command *cmd,
-			    bool write_sq)
+			    bool write_sq, struct request *req)
 {
 	unsigned long flags;
 	spin_lock_irqsave(&nvmeq->sq_lock, flags);
@@ -477,6 +477,9 @@ static void nvme_submit_cmd(struct nvme_queue *nvmeq, struct nvme_command *cmd,
 		nvmeq->sq_tail = 0;
 	if (write_sq)
 		nvme_write_sq_db(nvmeq);
+	if (req && req->bio && req->bio->_imposter_level > 0) {
+		req->bio->_imposter_device_start = ktime_get();
+	}
 	spin_unlock_irqrestore(&nvmeq->sq_lock, flags);
 }
 
@@ -850,6 +853,9 @@ static blk_status_t nvme_map_metadata(struct nvme_dev *dev, struct request *req,
 	return 0;
 }
 
+extern atomic_long_t _imposter_submission_latency;
+extern atomic_long_t _imposter_submission_count;
+
 /*
  * NOTE: ns is NULL when called on the admin queue.
  */
@@ -892,7 +898,11 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	}
 
 	blk_mq_start_request(req);
-	nvme_submit_cmd(nvmeq, &cmnd, bd->last);
+	if (req && req->bio && req->bio->_imposter_level > 0) {
+		atomic_long_add(ktime_sub(ktime_get(), req->bio->_imposter_submission_start), &_imposter_submission_latency);
+		atomic_long_inc(&_imposter_submission_count);
+	}
+	nvme_submit_cmd(nvmeq, &cmnd, bd->last, req);
 	return BLK_STS_OK;
 out_unmap_data:
 	nvme_unmap_data(dev, req);
@@ -938,6 +948,9 @@ static inline struct blk_mq_tags *nvme_queue_tagset(struct nvme_queue *nvmeq)
 	return nvmeq->dev->tagset.tags[nvmeq->qid - 1];
 }
 
+extern atomic_long_t _imposter_device_latency;
+extern atomic_long_t _imposter_device_count;
+
 static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 {
 	struct nvme_completion *cqe = &nvmeq->cqes[idx];
@@ -969,6 +982,9 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 	if (!req->bio || req->bio->_imposter_level == 0) {
 		nvme_end_request(req, cqe->status, cqe->result);
 	} else {
+		atomic_long_add(ktime_sub(ktime_get(), req->bio->_imposter_device_start), &_imposter_device_latency);
+		atomic_long_inc(&_imposter_device_count);
+
 		++req->bio->_imposter_count;
 		if (req->bio->_imposter_count < req->bio->_imposter_level) {
 			_index = req->bio->bi_iter.bi_sector >> (12 - 9);
@@ -976,8 +992,9 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			req->bio->bi_iter.bi_sector = _index << (12 - 9);
 			req->__sector = req->bio->bi_iter.bi_sector;
 			req->_imposter_command.rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
-			nvme_submit_cmd(nvmeq, &req->_imposter_command, true);
+			nvme_submit_cmd(nvmeq, &req->_imposter_command, true, req);
 		} else {
+			req->bio->_imposter_completion_start = ktime_get();
 			nvme_end_request(req, cqe->status, cqe->result);
 		}
 	}
@@ -1015,10 +1032,15 @@ static inline int nvme_process_cq(struct nvme_queue *nvmeq)
 	return found;
 }
 
+extern atomic_long_t _imposter_nvme_irq_latency;
+extern atomic_long_t _imposter_nvme_irq_count;
+
 static irqreturn_t nvme_irq(int irq, void *data)
 {
 	struct nvme_queue *nvmeq = data;
 	irqreturn_t ret = IRQ_NONE;
+
+	ktime_t start_time = ktime_get();
 
 	/*
 	 * The rmb/wmb pair ensures we see all updates from a previous run of
@@ -1028,6 +1050,9 @@ static irqreturn_t nvme_irq(int irq, void *data)
 	if (nvme_process_cq(nvmeq))
 		ret = IRQ_HANDLED;
 	wmb();
+
+	atomic_long_add(ktime_sub(ktime_get(), start_time), &_imposter_nvme_irq_latency);
+	atomic_long_inc(&_imposter_nvme_irq_count);
 
 	return ret;
 }
@@ -1055,10 +1080,15 @@ static void nvme_poll_irqdisable(struct nvme_queue *nvmeq)
 	enable_irq(pci_irq_vector(pdev, nvmeq->cq_vector));
 }
 
+extern atomic_long_t _imposter_nvme_poll_latency;
+extern atomic_long_t _imposter_nvme_poll_count;
+
 static int nvme_poll(struct blk_mq_hw_ctx *hctx)
 {
 	struct nvme_queue *nvmeq = hctx->driver_data;
 	bool found;
+
+	ktime_t start_time = ktime_get();
 
 	if (!nvme_cqe_pending(nvmeq))
 		return 0;
@@ -1066,6 +1096,11 @@ static int nvme_poll(struct blk_mq_hw_ctx *hctx)
 	spin_lock(&nvmeq->cq_poll_lock);
 	found = nvme_process_cq(nvmeq);
 	spin_unlock(&nvmeq->cq_poll_lock);
+
+	if (found) {
+		atomic_long_add(ktime_sub(ktime_get(), start_time), &_imposter_nvme_poll_latency);
+		atomic_long_inc(&_imposter_nvme_poll_count);
+	}
 
 	return found;
 }
@@ -1079,7 +1114,7 @@ static void nvme_pci_submit_async_event(struct nvme_ctrl *ctrl)
 	memset(&c, 0, sizeof(c));
 	c.common.opcode = nvme_admin_async_event;
 	c.common.command_id = NVME_AQ_BLK_MQ_DEPTH;
-	nvme_submit_cmd(nvmeq, &c, true);
+	nvme_submit_cmd(nvmeq, &c, true, NULL);
 }
 
 static int adapter_delete_queue(struct nvme_dev *dev, u8 opcode, u16 id)

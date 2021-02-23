@@ -213,6 +213,9 @@ struct bio {
 
 	int _imposter_level;
 	int _imposter_count;
+	ktime_t _imposter_submission_start;
+	ktime_t _imposter_completion_start;
+	ktime_t _imposter_device_start;
 
 	/*
 	 * We can inline a number of vecs at the end of the bio, to avoid

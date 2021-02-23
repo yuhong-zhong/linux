@@ -762,6 +762,31 @@ SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 	return ksys_ioctl(fd, cmd, arg);
 }
 
+atomic_long_t _imposter_device_latency;
+EXPORT_SYMBOL(_imposter_device_latency);
+atomic_long_t _imposter_device_count;
+EXPORT_SYMBOL(_imposter_device_count);
+
+atomic_long_t _imposter_submission_latency;
+EXPORT_SYMBOL(_imposter_submission_latency);
+atomic_long_t _imposter_submission_count;
+EXPORT_SYMBOL(_imposter_submission_count);
+
+atomic_long_t _imposter_completion_latency;
+EXPORT_SYMBOL(_imposter_completion_latency);
+atomic_long_t _imposter_completion_count;
+EXPORT_SYMBOL(_imposter_completion_count);
+
+atomic_long_t _imposter_nvme_irq_latency;
+EXPORT_SYMBOL(_imposter_nvme_irq_latency);
+atomic_long_t _imposter_nvme_irq_count;
+EXPORT_SYMBOL(_imposter_nvme_irq_count);
+
+atomic_long_t _imposter_nvme_poll_latency;
+EXPORT_SYMBOL(_imposter_nvme_poll_latency);
+atomic_long_t _imposter_nvme_poll_count;
+EXPORT_SYMBOL(_imposter_nvme_poll_count);
+
 SYSCALL_DEFINE2(imposter, int, fd, int, level)
 {
 	struct fd f = fdget_pos(fd);
@@ -780,7 +805,61 @@ SYSCALL_DEFINE2(imposter, int, fd, int, level)
 
 SYSCALL_DEFINE0(init_imposter)
 {
+	atomic_long_set(&_imposter_device_latency, 0);
+	atomic_long_set(&_imposter_device_count, 0);
+	atomic_long_set(&_imposter_submission_latency, 0);
+	atomic_long_set(&_imposter_submission_count, 0);
+	atomic_long_set(&_imposter_completion_latency, 0);
+	atomic_long_set(&_imposter_completion_count, 0);
+	atomic_long_set(&_imposter_nvme_irq_latency, 0);
+	atomic_long_set(&_imposter_nvme_irq_count, 0);
+	atomic_long_set(&_imposter_nvme_poll_latency, 0);
+	atomic_long_set(&_imposter_nvme_poll_count, 0);
 	return 0;
+}
+
+SYSCALL_DEFINE2(get_imposter, int, type, long, index)
+{
+	long value;
+
+	switch (type) {
+	case 0:
+		value = atomic_long_xchg(&_imposter_device_latency, 0);
+		break;
+	case 1:
+		value = atomic_long_xchg(&_imposter_device_count, 0);
+		break;
+	case 2:
+		value = atomic_long_xchg(&_imposter_submission_latency, 0);
+		break;
+	case 3:
+		value = atomic_long_xchg(&_imposter_submission_count, 0);
+		break;
+	case 4:
+		value = atomic_long_xchg(&_imposter_completion_latency, 0);
+		break;
+	case 5:
+		value = atomic_long_xchg(&_imposter_completion_count, 0);
+		break;
+	case 6:
+		value = atomic_long_xchg(&_imposter_nvme_irq_latency, 0);
+		break;
+	case 7:
+		value = atomic_long_xchg(&_imposter_nvme_irq_count, 0);
+		break;
+	case 8:
+		value = atomic_long_xchg(&_imposter_nvme_poll_latency, 0);
+		break;
+	case 9:
+		value = atomic_long_xchg(&_imposter_nvme_poll_count, 0);
+		break;
+	default:
+		printk("get_imposter: invalid type\n");
+		value = -1;
+		break;
+	}
+
+	return value;
 }
 
 #ifdef CONFIG_COMPAT
