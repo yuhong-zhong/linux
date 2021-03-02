@@ -407,15 +407,30 @@ static ssize_t new_sync_read(struct file *filp, char __user *buf, size_t len, lo
 	struct kiocb kiocb;
 	struct iov_iter iter;
 	ssize_t ret;
+	bool _retry = false;
 
 	init_sync_kiocb(&kiocb, filp);
 	kiocb.ki_pos = (ppos ? *ppos : 0);
+_imposter_retry:
 	iov_iter_init(&iter, READ, &iov, 1, len);
 
 	ret = call_read_iter(filp, &kiocb, &iter);
 	BUG_ON(ret == -EIOCBQUEUED);
-	if (ppos)
+	if (ppos && !_retry)
 		*ppos = kiocb.ki_pos;
+
+	if (filp->_imposter_level > 0 && kiocb._imposter_count < filp->_imposter_level) {
+		int _imposter_count = kiocb._imposter_count;
+		long _index = kiocb.ki_pos >> 12;
+		_index = (_index * 1103515245 + 12345) % (1 << 23);
+		_retry = true;
+
+		init_sync_kiocb(&kiocb, filp);
+		kiocb.ki_pos = _index << 12;
+		kiocb._imposter_count = _imposter_count;
+		goto _imposter_retry;
+	}
+
 	return ret;
 }
 

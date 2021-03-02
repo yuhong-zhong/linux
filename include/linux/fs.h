@@ -330,6 +330,7 @@ struct kiocb {
 	u16			ki_hint;
 	u16			ki_ioprio; /* See linux/ioprio.h */
 	unsigned int		ki_cookie; /* for ->iopoll */
+	int			_imposter_count;
 
 	randomized_struct_fields_end
 };
@@ -634,6 +635,7 @@ struct fsnotify_mark_connector;
  * of the 'struct inode'
  */
 struct inode {
+	int			_imposter_level;
 	umode_t			i_mode;
 	unsigned short		i_opflags;
 	kuid_t			i_uid;
@@ -745,6 +747,34 @@ struct inode {
 
 	void			*i_private; /* fs or device private pointer */
 } __randomize_layout;
+
+#define _IMPOSTER_MAX_LEN	0xffffffff
+#define _IMPOSTER_BLOCK_SHIFT	12
+#define _IMPOSTER_BLOCK_SIZE	(1 << _IMPOSTER_BLOCK_SHIFT)
+
+struct _imposter_extent {
+	struct rb_node rb_node;
+	__u32 lblk;
+	__u32 len;
+	__u64 pblk;
+};
+
+struct _imposter_mapping {
+	bool exist;
+	loff_t offset;  /* file offset */
+	__u64 len;
+	__u64 address;  /* disk address */
+};
+
+extern struct rb_root _imposter_extent_root;
+extern rwlock_t _imposter_extent_lock;
+
+void _imposter_sync_ext4_extent(struct inode *inode);
+void _imposter_print_tree(void);
+void _imposter_clear_tree(void);
+int _imposter_insert_extent(__u32 lblk, __u32 len, __u64 pblk);
+int _imposter_remove_extent(__u32 lblk, __u32 len);
+void _imposter_retrieve_mapping(loff_t offset, loff_t len, struct _imposter_mapping *mapping);
 
 struct timespec64 timestamp_truncate(struct timespec64 t, struct inode *inode);
 

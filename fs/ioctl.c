@@ -762,6 +762,9 @@ SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 	return ksys_ioctl(fd, cmd, arg);
 }
 
+struct rb_root _imposter_extent_root = RB_ROOT;
+rwlock_t _imposter_extent_lock = __RW_LOCK_UNLOCKED(_imposter_extent_lock);
+
 SYSCALL_DEFINE2(imposter, int, fd, int, level)
 {
 	struct fd f = fdget_pos(fd);
@@ -769,6 +772,11 @@ SYSCALL_DEFINE2(imposter, int, fd, int, level)
 
 	if (f.file) {
 		f.file->_imposter_level = level;
+		if (f.file->f_inode) {
+			f.file->f_inode->_imposter_level = level;
+			_imposter_sync_ext4_extent(f.file->f_inode);
+			_imposter_print_tree();
+		}
 		fdput_pos(f);
 		ret = 0;
 	} else {

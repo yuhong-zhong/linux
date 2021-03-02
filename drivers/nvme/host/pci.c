@@ -943,6 +943,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 	struct nvme_completion *cqe = &nvmeq->cqes[idx];
 	struct request *req;
 	long _index;
+	loff_t _offset, _len;
 
 	if (unlikely(cqe->command_id >= nvmeq->q_depth)) {
 		dev_warn(nvmeq->dev->ctrl.device,
@@ -971,12 +972,23 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 	} else {
 		++req->bio->_imposter_count;
 		if (req->bio->_imposter_count < req->bio->_imposter_level) {
+			struct _imposter_mapping mapping;
+
 			_index = req->bio->bi_iter.bi_sector >> (12 - 9);
 			_index = (_index * 1103515245 + 12345) % (1 << 23);
-			req->bio->bi_iter.bi_sector = _index << (12 - 9);
-			req->__sector = req->bio->bi_iter.bi_sector;
-			req->_imposter_command.rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
-			nvme_submit_cmd(nvmeq, &req->_imposter_command, true);
+			_offset = _index << 12;
+			_len = blk_rq_bytes(req);
+
+			_imposter_retrieve_mapping(_offset, _len, &mapping);
+			if (!mapping.exist || mapping.len < _len || mapping.address & 0x1ff) {
+				printk("imposter: nvme driver failed to dispatch new request\n");
+				nvme_end_request(req, cqe->status, cqe->result);
+			} else {
+				req->bio->bi_iter.bi_sector = mapping.address >> 9;
+				req->__sector = req->bio->bi_iter.bi_sector;
+				req->_imposter_command.rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
+				nvme_submit_cmd(nvmeq, &req->_imposter_command, true);
+			}
 		} else {
 			nvme_end_request(req, cqe->status, cqe->result);
 		}
