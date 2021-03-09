@@ -145,12 +145,13 @@
 static struct kmem_cache *ext4_es_cachep;
 static struct kmem_cache *ext4_pending_cachep;
 
-struct _imposter_extent *_imposter_do_search_extent(__u32 lblk)
+struct _imposter_extent *_imposter_do_search_extent(struct inode *inode, __u32 lblk)
 {
 	/* return the left-most extent that *might* overlap with the input extent,
 	 * assuming the extents in the tree do not overlap
 	 */
-	struct rb_node *node = _imposter_extent_root.rb_node;
+	struct rb_root *root = &inode->_imposter_extent_root;
+	struct rb_node *node = root->rb_node;
 	struct _imposter_extent *i_extent = NULL;
 
 	while (node) {
@@ -196,8 +197,10 @@ bool _imposter_extent_can_merge(struct _imposter_extent *i_extent_left,
 	return true;
 }
 
-void _imposter_do_try_merge_left(struct _imposter_extent *i_extent)
+void _imposter_do_try_merge_left(struct inode *inode,
+                                 struct _imposter_extent *i_extent)
 {
+	struct rb_root *root = &inode->_imposter_extent_root;
 	struct rb_node *node;
 	struct _imposter_extent *left_i_extent;
 
@@ -208,13 +211,15 @@ void _imposter_do_try_merge_left(struct _imposter_extent *i_extent)
 	left_i_extent = rb_entry(node, struct _imposter_extent, rb_node);
 	if (_imposter_extent_can_merge(left_i_extent, i_extent)) {
 		left_i_extent->len += i_extent->len;
-		rb_erase(&i_extent->rb_node, &_imposter_extent_root);
+		rb_erase(&i_extent->rb_node, root);
 		kfree(i_extent);
 	}
 }
 
-void _imposter_do_try_merge_right(struct _imposter_extent *i_extent)
+void _imposter_do_try_merge_right(struct inode *inode,
+                                  struct _imposter_extent *i_extent)
 {
+	struct rb_root *root = &inode->_imposter_extent_root;
 	struct rb_node *node;
 	struct _imposter_extent *right_i_extent;
 
@@ -225,16 +230,17 @@ void _imposter_do_try_merge_right(struct _imposter_extent *i_extent)
 	right_i_extent = rb_entry(node, struct _imposter_extent, rb_node);
 	if (_imposter_extent_can_merge(i_extent, right_i_extent)) {
 		i_extent->len += right_i_extent->len;
-		rb_erase(node, &_imposter_extent_root);
+		rb_erase(node, root);
 		kfree(right_i_extent);
 	}
 }
 
-int _imposter_do_insert_extent(struct _imposter_extent *new_i_extent)
+int _imposter_do_insert_extent(struct inode *inode,
+                               struct _imposter_extent *new_i_extent)
 {
 	/* assumption: new_i_extent does not overlap with any extent in the tree */
-
-	struct rb_node **p = &_imposter_extent_root.rb_node;
+	struct rb_root *root = &inode->_imposter_extent_root;
+	struct rb_node **p = &root->rb_node;
 	struct rb_node *parent = NULL;
 	struct _imposter_extent *i_extent = NULL;
 	int ret = 0;
@@ -248,14 +254,14 @@ int _imposter_do_insert_extent(struct _imposter_extent *new_i_extent)
 				i_extent->lblk = new_i_extent->lblk;
 				i_extent->len += new_i_extent->len;
 				i_extent->pblk = new_i_extent->pblk;
-				_imposter_do_try_merge_left(i_extent);
+				_imposter_do_try_merge_left(inode, i_extent);
 				goto out;
 			}
 			p = &((*p)->rb_left);
 		} else if (new_i_extent->lblk > i_extent->lblk + i_extent->len - 1) {
 			if (_imposter_extent_can_merge(i_extent, new_i_extent)) {
 				i_extent->len += new_i_extent->len;
-				_imposter_do_try_merge_right(i_extent);
+				_imposter_do_try_merge_right(inode, i_extent);
 				goto out;
 			}
 			p = &((*p)->rb_right);
@@ -277,19 +283,20 @@ int _imposter_do_insert_extent(struct _imposter_extent *new_i_extent)
 	i_extent->len = new_i_extent->len;
 	i_extent->pblk = new_i_extent->pblk;
 	rb_link_node(&i_extent->rb_node, parent, p);
-	rb_insert_color(&i_extent->rb_node, &_imposter_extent_root);
+	rb_insert_color(&i_extent->rb_node, root);
 
 out:
 	return ret;
 }
 
-int _imposter_do_remove_extent(__u32 lblk, __u32 len)
+int _imposter_do_remove_extent(struct inode *inode, __u32 lblk, __u32 len)
 {
+	struct rb_root *root = &inode->_imposter_extent_root;
 	struct _imposter_extent *i_extent;
 	int ret = 0;
 
 	while (true) {
-		i_extent = _imposter_do_search_extent(lblk);
+		i_extent = _imposter_do_search_extent(inode, lblk);
 		if (!i_extent || i_extent->lblk > lblk + len - 1)
 			break;
 
@@ -312,14 +319,14 @@ int _imposter_do_remove_extent(__u32 lblk, __u32 len)
 			new_i_extent.pblk = i_extent->pblk + (lblk + len - i_extent->lblk);
 
 			i_extent->len = lblk - i_extent->lblk;
-			ret = _imposter_do_insert_extent(&new_i_extent);
+			ret = _imposter_do_insert_extent(inode, &new_i_extent);
 			if (ret) {
 				printk("imposter: failed to insert extent in _imposter_do_remove_extent\n");
 				i_extent->len = ori_len;
 				goto out;
 			}
 		} else {
-			rb_erase(&i_extent->rb_node, &_imposter_extent_root);
+			rb_erase(&i_extent->rb_node, root);
 			kfree(i_extent);
 		}
 	}
@@ -328,16 +335,17 @@ out:
 	return ret;
 }
 
-void _imposter_do_clear_tree(void)
+void _imposter_do_clear_tree(struct inode *inode)
 {
+	struct rb_root *root = &inode->_imposter_extent_root;
 	struct rb_node *node;
 	struct _imposter_extent *i_extent;
 
-	node = rb_first(&_imposter_extent_root);
+	node = rb_first(root);
 	while (node) {
 		i_extent = rb_entry(node, struct _imposter_extent, rb_node);
 		node = rb_next(node);
-		rb_erase(&i_extent->rb_node, &_imposter_extent_root);
+		rb_erase(&i_extent->rb_node, root);
 		kfree(i_extent);
 	}
 }
@@ -347,9 +355,9 @@ void _imposter_sync_ext4_extent(struct inode *inode)
 	unsigned long flags;
 
 	read_lock(&EXT4_I(inode)->i_es_lock);
-	write_lock_irqsave(&_imposter_extent_lock, flags);
+	write_lock_irqsave(&inode->_imposter_extent_lock, flags);
 
-	_imposter_do_clear_tree();
+	_imposter_do_clear_tree(inode);
 
 	if (EXT4_I(inode)->i_es_tree.root.rb_node) {
 		struct extent_status *pos, *n;
@@ -361,7 +369,7 @@ void _imposter_sync_ext4_extent(struct inode *inode)
 				i_extent.lblk = pos->es_lblk;
 				i_extent.len = pos->es_len;
 				i_extent.pblk = ext4_es_pblock(pos);
-				ret = _imposter_do_insert_extent(&i_extent);
+				ret = _imposter_do_insert_extent(inode, &i_extent);
 				if (ret) {
 					printk("imposter: fail to insert extent\n");
 				}
@@ -369,11 +377,11 @@ void _imposter_sync_ext4_extent(struct inode *inode)
 		}
 	}
 
-	write_unlock_irqrestore(&_imposter_extent_lock, flags);
+	write_unlock_irqrestore(&inode->_imposter_extent_lock, flags);
 	read_unlock(&EXT4_I(inode)->i_es_lock);
 }
 
-int _imposter_insert_extent(__u32 lblk, __u32 len, __u64 pblk)
+int _imposter_insert_extent(struct inode *inode, __u32 lblk, __u32 len, __u64 pblk)
 {
 	unsigned long flags;
 	struct _imposter_extent new_i_extent;
@@ -384,8 +392,8 @@ int _imposter_insert_extent(__u32 lblk, __u32 len, __u64 pblk)
 
 	BUG_ON(lblk + len - 1 < lblk);
 
-	write_lock_irqsave(&_imposter_extent_lock, flags);
-	ret = _imposter_do_remove_extent(lblk, len);
+	write_lock_irqsave(&inode->_imposter_extent_lock, flags);
+	ret = _imposter_do_remove_extent(inode, lblk, len);
 	if (ret) {
 		printk("imposter: failed to remove extent in _imposter_insert_extent\n");
 		goto unlock;
@@ -393,17 +401,17 @@ int _imposter_insert_extent(__u32 lblk, __u32 len, __u64 pblk)
 	new_i_extent.lblk = lblk;
 	new_i_extent.len = len;
 	new_i_extent.pblk = pblk;
-	ret = _imposter_do_insert_extent(&new_i_extent);
+	ret = _imposter_do_insert_extent(inode, &new_i_extent);
 	if (ret) {
 		printk("imposter: failed to insert extent in _imposter_insert_extent\n");
 		goto unlock;
 	}
 unlock:
-	write_unlock_irqrestore(&_imposter_extent_lock, flags);
+	write_unlock_irqrestore(&inode->_imposter_extent_lock, flags);
 	return ret;
 }
 
-int _imposter_remove_extent(__u32 lblk, __u32 len)
+int _imposter_remove_extent(struct inode *inode, __u32 lblk, __u32 len)
 {
 	unsigned long flags;
 	int ret = 0;
@@ -413,18 +421,18 @@ int _imposter_remove_extent(__u32 lblk, __u32 len)
 
 	BUG_ON(lblk + len - 1 < lblk);
 
-	write_lock_irqsave(&_imposter_extent_lock, flags);
-	ret = _imposter_do_remove_extent(lblk, len);
+	write_lock_irqsave(&inode->_imposter_extent_lock, flags);
+	ret = _imposter_do_remove_extent(inode, lblk, len);
 	if (ret) {
 		printk("imposter: failed to remove extent in _imposter_remove_extent\n");
 		goto unlock;
 	}
 unlock:
-	write_unlock_irqrestore(&_imposter_extent_lock, flags);
+	write_unlock_irqrestore(&inode->_imposter_extent_lock, flags);
 	return ret;
 }
 
-void _imposter_print_tree(void)
+void _imposter_print_tree(struct inode *inode)
 {
 	unsigned long flags;
 	struct rb_node *node;
@@ -432,8 +440,8 @@ void _imposter_print_tree(void)
 
 	printk("imposter extent tree: (sizeof(struct _imposter_extent)=%d)\n",
 	       sizeof(struct _imposter_extent));
-	read_lock_irqsave(&_imposter_extent_lock, flags);
-	node = rb_first(&_imposter_extent_root);
+	read_lock_irqsave(&inode->_imposter_extent_lock, flags);
+	node = rb_first(&inode->_imposter_extent_root);
 	while (node) {
 		struct _imposter_extent *i_extent;
 		i_extent = rb_entry(node, struct _imposter_extent, rb_node);
@@ -444,19 +452,19 @@ void _imposter_print_tree(void)
 		node = rb_next(node);
 	}
 	printk("  total number of extents: %llu\n", num_extents);
-	read_unlock_irqrestore(&_imposter_extent_lock, flags);
+	read_unlock_irqrestore(&inode->_imposter_extent_lock, flags);
 }
 
-void _imposter_clear_tree(void)
+void _imposter_clear_tree(struct inode *inode)
 {
 	unsigned long flags;
 
-	write_lock_irqsave(&_imposter_extent_lock, flags);
-	_imposter_do_clear_tree();
-	write_unlock_irqrestore(&_imposter_extent_lock, flags);
+	write_lock_irqsave(&inode->_imposter_extent_lock, flags);
+	_imposter_do_clear_tree(inode);
+	write_unlock_irqrestore(&inode->_imposter_extent_lock, flags);
 }
 
-void _imposter_retrieve_mapping(loff_t offset, loff_t len, struct _imposter_mapping *mapping)
+void _imposter_retrieve_mapping(struct inode *inode, loff_t offset, loff_t len, struct _imposter_mapping *mapping)
 {
 	unsigned long flags;
 	__u64 i_lblk_start, i_lblk_end;
@@ -465,8 +473,8 @@ void _imposter_retrieve_mapping(loff_t offset, loff_t len, struct _imposter_mapp
 	i_lblk_start = offset >> _IMPOSTER_BLOCK_SHIFT;
 	i_lblk_end = (offset + len - 1) >> _IMPOSTER_BLOCK_SHIFT;
 
-	read_lock_irqsave(&_imposter_extent_lock, flags);
-	i_extent = _imposter_do_search_extent(i_lblk_start);
+	read_lock_irqsave(&inode->_imposter_extent_lock, flags);
+	i_extent = _imposter_do_search_extent(inode, i_lblk_start);
 	if (!i_extent || i_extent->lblk > i_lblk_end) {
 		mapping->exist = false;
 	} else {
@@ -479,7 +487,7 @@ void _imposter_retrieve_mapping(loff_t offset, loff_t len, struct _imposter_mapp
 		mapping->len = in_extent_len;
 		mapping->address = (i_extent->pblk << _IMPOSTER_BLOCK_SHIFT) + in_extent_offset;
 	}
-	read_unlock_irqrestore(&_imposter_extent_lock, flags);
+	read_unlock_irqrestore(&inode->_imposter_extent_lock, flags);
 }
 EXPORT_SYMBOL(_imposter_retrieve_mapping);
 
@@ -1092,8 +1100,8 @@ static int __es_insert_extent(struct inode *inode, struct extent_status *newes)
 	struct extent_status *es;
 
 	if (inode->_imposter_level > 0 && ext4_es_is_written(newes) && !ext4_es_is_delayed(newes)) {
-		_imposter_insert_extent(newes->es_lblk, newes->es_len, ext4_es_pblock(newes));
-		_imposter_print_tree();
+		_imposter_insert_extent(inode, newes->es_lblk, newes->es_len, ext4_es_pblock(newes));
+		_imposter_print_tree(inode);
 	}
 
 	while (*p) {
@@ -1640,8 +1648,8 @@ static int __es_remove_extent(struct inode *inode, ext4_lblk_t lblk,
 	struct rsvd_count rc;
 
 	if (inode->_imposter_level > 0) {
-		_imposter_remove_extent(lblk, end - lblk + 1);
-		_imposter_print_tree();
+		_imposter_remove_extent(inode, lblk, end - lblk + 1);
+		_imposter_print_tree(inode);
 	}
 
 	if (reserved == NULL || !test_opt(inode->i_sb, DELALLOC))

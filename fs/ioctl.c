@@ -762,8 +762,7 @@ SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 	return ksys_ioctl(fd, cmd, arg);
 }
 
-struct rb_root _imposter_extent_root = RB_ROOT;
-rwlock_t _imposter_extent_lock = __RW_LOCK_UNLOCKED(_imposter_extent_lock);
+extern const struct inode_operations ext4_file_inode_operations;
 
 SYSCALL_DEFINE2(imposter, int, fd, int, level)
 {
@@ -774,8 +773,10 @@ SYSCALL_DEFINE2(imposter, int, fd, int, level)
 		f.file->_imposter_level = level;
 		if (f.file->f_inode) {
 			f.file->f_inode->_imposter_level = level;
-			_imposter_sync_ext4_extent(f.file->f_inode);
-			_imposter_print_tree();
+			if (f.file->f_inode->i_op == &ext4_file_inode_operations) {
+				_imposter_sync_ext4_extent(f.file->f_inode);
+				_imposter_print_tree(f.file->f_inode);
+			}
 		}
 		fdput_pos(f);
 		ret = 0;

@@ -233,6 +233,7 @@ __blkdev_direct_IO_simple(struct kiocb *iocb, struct iov_iter *iter,
 
 	bio._imposter_level = file->_imposter_level;
 	bio._imposter_count = iocb->_imposter_count;
+	bio._imposter_inode = file->f_inode;
 
 	ret = bio_iov_iter_get_pages(&bio, iter);
 	if (unlikely(ret))
@@ -394,6 +395,7 @@ __blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter, int nr_pages)
 		bio->bi_ioprio = iocb->ki_ioprio;
 		bio->_imposter_level = file->_imposter_level;
 		bio->_imposter_count = iocb->_imposter_count;
+		bio->_imposter_inode = file->f_inode;
 
 		ret = bio_iov_iter_get_pages(bio, iter);
 		if (unlikely(ret)) {

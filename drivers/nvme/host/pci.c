@@ -938,6 +938,8 @@ static inline struct blk_mq_tags *nvme_queue_tagset(struct nvme_queue *nvmeq)
 	return nvmeq->dev->tagset.tags[nvmeq->qid - 1];
 }
 
+extern const struct inode_operations ext4_file_inode_operations;
+
 static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 {
 	struct nvme_completion *cqe = &nvmeq->cqes[idx];
@@ -972,19 +974,25 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 	} else {
 		++req->bio->_imposter_count;
 		if (req->bio->_imposter_count < req->bio->_imposter_level) {
-			struct _imposter_mapping mapping;
-
 			_index = req->bio->bi_iter.bi_sector >> (12 - 9);
 			_index = (_index * 1103515245 + 12345) % (1 << 23);
 			_offset = _index << 12;
 			_len = blk_rq_bytes(req);
 
-			_imposter_retrieve_mapping(_offset, _len, &mapping);
-			if (!mapping.exist || mapping.len < _len || mapping.address & 0x1ff) {
-				printk("imposter: nvme driver failed to dispatch new request\n");
-				nvme_end_request(req, cqe->status, cqe->result);
+			if (req->bio->_imposter_inode->i_op == &ext4_file_inode_operations) {
+				struct _imposter_mapping mapping;
+				_imposter_retrieve_mapping(req->bio->_imposter_inode, _offset, _len, &mapping);
+				if (!mapping.exist || mapping.len < _len || mapping.address & 0x1ff) {
+					printk("imposter: nvme driver failed to dispatch new request\n");
+					nvme_end_request(req, cqe->status, cqe->result);
+				} else {
+					req->bio->bi_iter.bi_sector = mapping.address >> 9;
+					req->__sector = req->bio->bi_iter.bi_sector;
+					req->_imposter_command.rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
+					nvme_submit_cmd(nvmeq, &req->_imposter_command, true);
+				}
 			} else {
-				req->bio->bi_iter.bi_sector = mapping.address >> 9;
+				req->bio->bi_iter.bi_sector = _index << (12 - 9);
 				req->__sector = req->bio->bi_iter.bi_sector;
 				req->_imposter_command.rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
 				nvme_submit_cmd(nvmeq, &req->_imposter_command, true);

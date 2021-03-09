@@ -283,6 +283,7 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 
 		bio->_imposter_level = dio->iocb->ki_filp->_imposter_level;
 		bio->_imposter_count = dio->iocb->_imposter_count;
+		bio->_imposter_inode = dio->iocb->ki_filp->f_inode;
 
 		ret = bio_iov_iter_get_pages(bio, dio->submit.iter);
 		if (unlikely(ret)) {

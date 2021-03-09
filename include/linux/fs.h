@@ -636,6 +636,8 @@ struct fsnotify_mark_connector;
  */
 struct inode {
 	int			_imposter_level;
+	struct rb_root		_imposter_extent_root;
+	rwlock_t		_imposter_extent_lock;
 	umode_t			i_mode;
 	unsigned short		i_opflags;
 	kuid_t			i_uid;
@@ -766,15 +768,12 @@ struct _imposter_mapping {
 	__u64 address;  /* disk address */
 };
 
-extern struct rb_root _imposter_extent_root;
-extern rwlock_t _imposter_extent_lock;
-
 void _imposter_sync_ext4_extent(struct inode *inode);
-void _imposter_print_tree(void);
-void _imposter_clear_tree(void);
-int _imposter_insert_extent(__u32 lblk, __u32 len, __u64 pblk);
-int _imposter_remove_extent(__u32 lblk, __u32 len);
-void _imposter_retrieve_mapping(loff_t offset, loff_t len, struct _imposter_mapping *mapping);
+void _imposter_print_tree(struct inode *inode);
+void _imposter_clear_tree(struct inode *inode);
+int _imposter_insert_extent(struct inode *inode, __u32 lblk, __u32 len, __u64 pblk);
+int _imposter_remove_extent(struct inode *inode, __u32 lblk, __u32 len);
+void _imposter_retrieve_mapping(struct inode *inode, loff_t offset, loff_t len, struct _imposter_mapping *mapping);
 
 struct timespec64 timestamp_truncate(struct timespec64 t, struct inode *inode);
 

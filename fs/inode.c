@@ -247,6 +247,9 @@ static struct inode *alloc_inode(struct super_block *sb)
 		return NULL;
 	}
 
+	inode->_imposter_extent_root = RB_ROOT;
+	rwlock_init(&inode->_imposter_extent_lock);
+
 	return inode;
 }
 
@@ -1675,6 +1678,7 @@ retry:
 			mark_inode_dirty_sync(inode);
 			goto retry;
 		}
+		_imposter_clear_tree(inode);
 		iput_final(inode);
 	}
 }
