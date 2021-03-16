@@ -636,8 +636,8 @@ struct fsnotify_mark_connector;
  */
 struct inode {
 	int			_imposter_level;
-	struct rb_root		_imposter_extent_root;
-	rwlock_t		_imposter_extent_lock;
+	struct rb_root __rcu	*_imposter_extent_root;
+	spinlock_t		_imposter_extent_lock;
 	umode_t			i_mode;
 	unsigned short		i_opflags;
 	kuid_t			i_uid;
@@ -754,6 +754,11 @@ struct inode {
 #define _IMPOSTER_BLOCK_SHIFT	12
 #define _IMPOSTER_BLOCK_SIZE	(1 << _IMPOSTER_BLOCK_SHIFT)
 
+struct _imposter_root {
+	struct rb_root rb_root;
+	struct rcu_head rcu_head;
+};
+
 struct _imposter_extent {
 	struct rb_node rb_node;
 	__u32 lblk;
@@ -771,8 +776,8 @@ struct _imposter_mapping {
 void _imposter_sync_ext4_extent(struct inode *inode);
 void _imposter_print_tree(struct inode *inode);
 void _imposter_clear_tree(struct inode *inode);
-int _imposter_insert_extent(struct inode *inode, __u32 lblk, __u32 len, __u64 pblk);
-int _imposter_remove_extent(struct inode *inode, __u32 lblk, __u32 len);
+// int _imposter_insert_extent(struct inode *inode, __u32 lblk, __u32 len, __u64 pblk);  /* not used */
+// int _imposter_remove_extent(struct inode *inode, __u32 lblk, __u32 len);  /* not used */
 void _imposter_retrieve_mapping(struct inode *inode, loff_t offset, loff_t len, struct _imposter_mapping *mapping);
 
 struct timespec64 timestamp_truncate(struct timespec64 t, struct inode *inode);

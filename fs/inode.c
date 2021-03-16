@@ -247,8 +247,8 @@ static struct inode *alloc_inode(struct super_block *sb)
 		return NULL;
 	}
 
-	inode->_imposter_extent_root = RB_ROOT;
-	rwlock_init(&inode->_imposter_extent_lock);
+	inode->_imposter_extent_root = NULL;
+	spin_lock_init(&inode->_imposter_extent_lock);
 
 	return inode;
 }
