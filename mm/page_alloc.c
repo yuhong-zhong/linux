@@ -75,6 +75,159 @@
 #include "internal.h"
 #include "shuffle.h"
 
+struct free_color_area {
+	struct list_head free_list;
+	spinlock_t lock;
+	unsigned long nr_free;
+	unsigned long nr_allocation;
+};
+
+struct free_color_area color_area_arr[MAX_NUMNODES][NR_COLORS];
+
+int get_colorinfo(struct colorinfo **ci)
+{
+	int nr_numa;
+	int nid, color, i;
+
+	nr_numa = num_online_nodes();
+	*ci = kmalloc(sizeof(struct colorinfo) * nr_numa * NR_COLORS, GFP_KERNEL);
+	if (!(*ci)) {
+		prink("color: get_colorinfo failed to allocation memory for ci\n");
+		return -ENOMEM;
+	}
+	i = 0;
+	for_each_online_node(nid) {
+		for (color = 0; color < NR_COLORS; ++color) {
+			(*ci)[i].nid = nid;
+			(*ci)[i].color = color;
+			(*ci)[i].total_free_pages = free_color_area[nid][color].nr_free;
+		 	(*ci)[i].total_allocations = free_color_area[nid][color].nr_allocation;
+			++i;
+		}
+	}
+	return nr_numa * NR_COLORS;
+}
+EXPORT_SYMBOL(get_colorinfo);
+
+int get_page_color(struct page *page)
+{
+	int nid = page_to_nid(page);
+	phys_addr_t addr = page_to_pfn(page) << PAGE_SHIFT;
+	phys_addr_t node_base_addr = NODE_DATA(nid)->node_start_pfn << PAGE_SHIFT;
+
+	return ((addr - node_base_addr) % DRAM_SIZE_PER_NODE) / COLOR_SIZE;
+}
+EXPORT_SYMBOL(get_page_color);
+
+static bool atomic_check_free_color_page(int nid, int color)
+{
+	bool is_empty;
+	spin_lock(&color_area_arr[nid][color].lock);
+	is_empty = list_empty(&color_area_arr[nid][color].free_list);
+	spin_unlock(&color_area_arr[nid][color].lock);
+	return !is_empty;
+}
+
+static struct page *atomic_get_color_page(int nid, int color)
+{
+	struct page *page = NULL;
+
+	spin_lock(&color_area_arr[nid][color].lock);
+	if (!list_empty(&color_area[nid][color].free_list)) {
+		page = list_first_entry(&color_area[nid][color].free_list, struct page, lru);
+		list_del_init(&page->lru);
+		--color_area[nid][color].nr_free;
+		++color_area[nid][color].nr_allocation;
+	}
+	spin_unlock(&color_area_arr[nid][color].lock);
+	return page;
+}
+
+static void atomic_insert_free_color_page(struct page *page)
+{
+	int pid = page_to_nid(page);
+	int color = get_page_color(page);
+
+	spin_lock(&color_area_arr[nid][color].lock);
+	list_add_tail(&page->lru, &color_area_arr[nid][color].free_list);
+	++color_area_arr[nid][color].nr_free;
+	spin_unlock(&color_area_arr[nid][color].lock);
+}
+
+int refill_color_page(int nid, long nr_pages)
+{
+	nodemask_t nodemask = NODE_MASK_NONE;
+	struct page *page;
+	long i;
+
+	node_set(nid, nodemask);
+	for (i = 0; i < nr_pages; ++i) {
+		page = __alloc_pages_nodemask(GFP_KERNEL, 0, nid, &nodemask);
+		if (page = NULL) {
+			break;
+		}
+		atomic_insert_free_color_page(page);
+	}
+	return i;
+}
+EXPORT_SYMBOL(refill_color_page);
+
+struct page *alloc_color_page(nodemask_t *nodemask, int preferred_nid,
+                              colormask_t *colormask, int preferred_color)
+{
+	struct page *page = NULL;
+	bool node_retry = false, color_retry = false;
+	int nid, color;
+
+retry_node:
+	for_each_node_mask(nid, nodemask) {
+		if (!node_retry && nid < preferred_nid)
+			continue;
+retry_color:
+		for_each_color(color, colormask) {
+			if (!color_retry && color < preferred_color)
+				continue;
+
+			if (!atomic_check_free_color_page(nid, color))
+				refill_color_page(nid, (1l << (27 - PAGE_SHIFT)));
+
+			page = atomic_get_color_page(nid, color);
+			if (page)
+				goto out;
+		}
+		if (!color_retry) {
+			color_retry = true;
+			goto retry_color;
+		}
+	}
+	if (!node_retry) {
+		node_retry = true;
+		color_retry = false;
+		goto retry_node;
+	}
+out:
+	return page;
+}
+EXPORT_SYMBOL(alloc_color_page);
+
+void __init colormem_init()
+{
+	int nid, color;
+
+	for (nid = 0; nid < MAX_NUMNODES; ++nid) {
+		for (color = 0; color < NR_COLORS; ++color) {
+			INIT_LIST_HEAD(&color_area_arr[nid][color].free_list);
+			spin_lock_init(&color_area_arr[nid][color].lock);
+			color_area_arr[nid][color].nr_free = 0;
+			color_area_arr[nid][color].nr_allocation = 0;
+		}
+	}
+
+	for_each_online_node(nid) {
+		refill_color_page(nid, (1l << (27 - PAGE_SHIFT)));
+	}
+}
+
 /* prevent >1 _updater_ of zone percpu pageset ->high and ->batch fields */
 static DEFINE_MUTEX(pcp_batch_high_lock);
 #define MIN_PERCPU_PAGELIST_FRACTION	(8)
@@ -4729,6 +4882,17 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
 	unsigned int alloc_flags = ALLOC_WMARK_LOW;
 	gfp_t alloc_mask; /* The gfp_t that was actually used for allocation */
 	struct alloc_context ac = { };
+
+	if (order == 0 && gfp_mask & GFP_HIGHUSER && colormask_weight(&current->colors_allowed) > 0
+	    && colormask_weight(&current->colors_allowed) < NR_COLORS && nodemask != NULL) {
+		/* assumption: one thread never trigger multiple page faults simultaneously */
+		page = alloc_color_page(nodemask, preferred_nid, &current->colors_allowed, current->preferred_color);
+		if (page) {
+			int next_color = get_page_color(page) + 1;
+			current->preferred_color = next_color;
+			goto out;
+		}
+	}
 
 	/*
 	 * There are several places where we assume that the order value is sane

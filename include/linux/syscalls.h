@@ -1421,4 +1421,7 @@ long compat_ksys_semtimedop(int semid, struct sembuf __user *tsems,
 			    unsigned int nsops,
 			    const struct old_timespec32 __user *timeout);
 
+asmlinkage long sys_set_color(pid_t pid, unsigned int len, unsigned long __user *user_mask_ptr);
+asmlinkage long sys_get_color(pid_t pid, unsigned int len, unsigned long __user *user_mask_ptr);
+
 #endif

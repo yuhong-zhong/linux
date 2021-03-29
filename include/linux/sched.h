@@ -20,6 +20,7 @@
 #include <linux/hrtimer.h>
 #include <linux/seccomp.h>
 #include <linux/nodemask.h>
+#include <linux/colormask.h>
 #include <linux/rcupdate.h>
 #include <linux/refcount.h>
 #include <linux/resource.h>
@@ -700,6 +701,9 @@ struct task_struct {
 	int				nr_cpus_allowed;
 	const cpumask_t			*cpus_ptr;
 	cpumask_t			cpus_mask;
+
+	colormask_t			colors_allowed;
+	int				preferred_color;
 
 #ifdef CONFIG_PREEMPT_RCU
 	int				rcu_read_lock_nesting;
