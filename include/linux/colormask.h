@@ -10,6 +10,8 @@
 #define COLOR_SIZE (1l << 27)
 #define NR_COLORS ((DRAM_SIZE_PER_NODE + COLOR_SIZE - 1) / COLOR_SIZE)
 
+#define NR_REFILL_COLOR_PAGE (1l << 27)
+
 typedef struct colormask { DECLARE_BITMAP(bits, NR_COLORS); } colormask_t;
 
 #define colormask_bits(maskp) ((maskp)->bits)
@@ -63,7 +65,7 @@ static inline void colormask_clear(struct colormask *dstp)
 	bitmap_zero(colormask_bits(dstp), NR_COLORS);
 }
 
-static inline void colormask_copy(struct colormask* dstp, 
+static inline void colormask_copy(struct colormask* dstp,
                                   const struct colormask *srcp)
 {
 	bitmap_copy(colormask_bits(dstp), colormask_bits(srcp), NR_COLORS);

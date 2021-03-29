@@ -92,7 +92,7 @@ int get_colorinfo(struct colorinfo **ci)
 	nr_numa = num_online_nodes();
 	*ci = kmalloc(sizeof(struct colorinfo) * nr_numa * NR_COLORS, GFP_KERNEL);
 	if (!(*ci)) {
-		prink("color: get_colorinfo failed to allocation memory for ci\n");
+		printk("color: get_colorinfo failed to allocation memory for ci\n");
 		return -ENOMEM;
 	}
 	i = 0;
@@ -100,8 +100,8 @@ int get_colorinfo(struct colorinfo **ci)
 		for (color = 0; color < NR_COLORS; ++color) {
 			(*ci)[i].nid = nid;
 			(*ci)[i].color = color;
-			(*ci)[i].total_free_pages = free_color_area[nid][color].nr_free;
-		 	(*ci)[i].total_allocations = free_color_area[nid][color].nr_allocation;
+			(*ci)[i].total_free_pages = color_area_arr[nid][color].nr_free;
+			(*ci)[i].total_allocations = color_area_arr[nid][color].nr_allocation;
 			++i;
 		}
 	}
@@ -133,11 +133,11 @@ static struct page *atomic_get_color_page(int nid, int color)
 	struct page *page = NULL;
 
 	spin_lock(&color_area_arr[nid][color].lock);
-	if (!list_empty(&color_area[nid][color].free_list)) {
-		page = list_first_entry(&color_area[nid][color].free_list, struct page, lru);
+	if (!list_empty(&color_area_arr[nid][color].free_list)) {
+		page = list_first_entry(&color_area_arr[nid][color].free_list, struct page, lru);
 		list_del_init(&page->lru);
-		--color_area[nid][color].nr_free;
-		++color_area[nid][color].nr_allocation;
+		--color_area_arr[nid][color].nr_free;
+		++color_area_arr[nid][color].nr_allocation;
 	}
 	spin_unlock(&color_area_arr[nid][color].lock);
 	return page;
@@ -145,7 +145,7 @@ static struct page *atomic_get_color_page(int nid, int color)
 
 static void atomic_insert_free_color_page(struct page *page)
 {
-	int pid = page_to_nid(page);
+	int nid = page_to_nid(page);
 	int color = get_page_color(page);
 
 	spin_lock(&color_area_arr[nid][color].lock);
@@ -163,7 +163,7 @@ int refill_color_page(int nid, long nr_pages)
 	node_set(nid, nodemask);
 	for (i = 0; i < nr_pages; ++i) {
 		page = __alloc_pages_nodemask(GFP_KERNEL, 0, nid, &nodemask);
-		if (page = NULL) {
+		if (page == NULL) {
 			break;
 		}
 		atomic_insert_free_color_page(page);
@@ -178,9 +178,10 @@ struct page *alloc_color_page(nodemask_t *nodemask, int preferred_nid,
 	struct page *page = NULL;
 	bool node_retry = false, color_retry = false;
 	int nid, color;
+	int refill_ret;
 
 retry_node:
-	for_each_node_mask(nid, nodemask) {
+	for_each_node_mask(nid, *nodemask) {
 		if (!node_retry && nid < preferred_nid)
 			continue;
 retry_color:
@@ -188,8 +189,12 @@ retry_color:
 			if (!color_retry && color < preferred_color)
 				continue;
 
-			if (!atomic_check_free_color_page(nid, color))
-				refill_color_page(nid, (1l << (27 - PAGE_SHIFT)));
+			/* try really hard to allocate pages */
+			while (!atomic_check_free_color_page(nid, color)) {
+				refill_ret = refill_color_page(nid, NR_REFILL_COLOR_PAGE);
+				if (refill_ret < NR_REFILL_COLOR_PAGE)
+					break;
+			}
 
 			page = atomic_get_color_page(nid, color);
 			if (page)
@@ -224,7 +229,7 @@ void __init colormem_init()
 	}
 
 	for_each_online_node(nid) {
-		refill_color_page(nid, (1l << (27 - PAGE_SHIFT)));
+		refill_color_page(nid, NR_REFILL_COLOR_PAGE);
 	}
 }
 
@@ -4883,8 +4888,10 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
 	gfp_t alloc_mask; /* The gfp_t that was actually used for allocation */
 	struct alloc_context ac = { };
 
-	if (order == 0 && gfp_mask & GFP_HIGHUSER && colormask_weight(&current->colors_allowed) > 0
-	    && colormask_weight(&current->colors_allowed) < NR_COLORS && nodemask != NULL) {
+	if (order == 0 && nodemask != NULL
+	    && (gfp_mask & GFP_USER) && (gfp_mask & __GFP_HIGHMEM)
+	    && colormask_weight(&current->colors_allowed) > 0
+	    && colormask_weight(&current->colors_allowed) < NR_COLORS) {
 		/* assumption: one thread never trigger multiple page faults simultaneously */
 		page = alloc_color_page(nodemask, preferred_nid, &current->colors_allowed, current->preferred_color);
 		if (page) {

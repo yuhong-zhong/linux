@@ -491,7 +491,7 @@ int get_colorinfo(struct colorinfo **ci);
 int get_page_color(struct page *page);
 struct page *alloc_color_page(nodemask_t *nodemask, int preferred_nid,
                               colormask_t *colormask, int preferred_color);
-void colormem_init();
+void colormem_init(void);
 
 struct page *
 __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
