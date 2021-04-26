@@ -364,7 +364,7 @@ void _imposter_sync_ext4_extent(struct inode *inode)
 		printk("imposter: failed to allocate new tree root");
 		goto unlock;
 	}
-	new_i_root->rb_node = RB_ROOT;
+	new_i_root->rb_root = RB_ROOT;
 	new_root = &new_i_root->rb_root;
 
 	if (EXT4_I(inode)->i_es_tree.root.rb_node) {
