@@ -24,6 +24,8 @@
 #include <linux/io-64-nonatomic-lo-hi.h>
 #include <linux/sed-opal.h>
 #include <linux/pci-p2pdma.h>
+#include <linux/bpf.h>
+#include <linux/filter.h>
 
 #include "trace.h"
 #include "nvme.h"
@@ -938,11 +940,21 @@ static inline struct blk_mq_tags *nvme_queue_tagset(struct nvme_queue *nvmeq)
 	return nvmeq->dev->tagset.tags[nvmeq->qid - 1];
 }
 
+extern struct bpf_prog __rcu *_imposter_prog;
+extern struct bpf_imposter_kern _imposter_g_context;
+
+extern const char *_imposter_leaf_page;
+extern const char *_imposter_internal_page;
+
 static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 {
 	struct nvme_completion *cqe = &nvmeq->cqes[idx];
 	struct request *req;
 	long _index;
+	struct bpf_prog *ebpf_prog;
+	u32 ebpf_return;
+	long _tmp;
+	int i;
 
 	if (unlikely(cqe->command_id >= nvmeq->q_depth)) {
 		dev_warn(nvmeq->dev->ctrl.device,
@@ -971,6 +983,47 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 	} else {
 		++req->bio->_imposter_count;
 		if (req->bio->_imposter_count < req->bio->_imposter_level) {
+			rcu_read_lock();
+			ebpf_prog = rcu_dereference(_imposter_prog);
+			if (ebpf_prog) {
+				/* internal page test */
+				memset(&_imposter_g_context, 0, sizeof(struct bpf_imposter_kern));
+				memcpy(_imposter_g_context.data, _imposter_internal_page, 512);
+				memcpy(_imposter_g_context.key, "0453814", 7);
+				_imposter_g_context.key_size = 7;
+				for (i = 0; i < 512; ++i) {
+					ebpf_return = BPF_PROG_RUN(ebpf_prog, &_imposter_g_context);
+					if (ebpf_return != EAGAIN) {
+						break;
+					}
+				}
+				if (ebpf_return == EINVAL) {
+					printk("EBPF internal page search failed\n");
+				} else if (ebpf_return  == EAGAIN) {
+					printk("EBPF internal page search did not finish\n");
+				} else {
+					printk("EBPF internal page search result: %ld\n", _imposter_g_context.value);
+				}
+				/* leaf page test */
+				memset(&_imposter_g_context, 0, sizeof(struct bpf_imposter_kern));
+				memcpy(_imposter_g_context.data, _imposter_leaf_page, 512);
+				memcpy(_imposter_g_context.key, "100005", 6);
+				_imposter_g_context.key_size = 6;
+				for (i = 0; i < 512; ++i) {
+					ebpf_return = BPF_PROG_RUN(ebpf_prog, &_imposter_g_context);
+					if (ebpf_return != EAGAIN) {
+						break;
+					}
+				}
+				if (ebpf_return == EINVAL) {
+					printk("EBPF leaf page search failed\n");
+				} else if (ebpf_return == EAGAIN) {
+					printk("EBPF leaf page search did not finish\n");
+				} else {
+					printk("EBPF leaf page search result: %ld\n", _imposter_g_context.value);
+				}
+			}
+			rcu_read_unlock();
 			_index = req->bio->bi_iter.bi_sector >> (12 - 9);
 			_index = (_index * 1103515245 + 12345) % (1 << 23);
 			req->bio->bi_iter.bi_sector = _index << (12 - 9);
