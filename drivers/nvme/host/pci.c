@@ -952,12 +952,6 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 {
 	struct nvme_completion *cqe = &nvmeq->cqes[idx];
 	struct request *req;
-	long _index;
-	loff_t _offset, _len;
-	struct bpf_prog *ebpf_prog;
-	u32 ebpf_return;
-	long _tmp;
-	int i;
 
 	if (unlikely(cqe->command_id >= nvmeq->q_depth)) {
 		dev_warn(nvmeq->dev->ctrl.device,
@@ -981,78 +975,88 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 	req = blk_mq_tag_to_rq(nvme_queue_tagset(nvmeq), cqe->command_id);
 	trace_nvme_sq(req, cqe->sq_head, nvmeq->sq_tail);
 
-	if (!req->bio || req->bio->_imposter_level == 0) {
+	if (!req->bio || !req->bio->_imposter_enable) {
+		/* normal completion path */
 		nvme_end_request(req, cqe->status, cqe->result);
 	} else {
-		++req->bio->_imposter_count;
-		if (req->bio->_imposter_count < req->bio->_imposter_level) {
-			rcu_read_lock();
-			ebpf_prog = rcu_dereference(_imposter_prog);
-			if (ebpf_prog) {
-				/* internal page test */
-				memset(&_imposter_g_context, 0, sizeof(struct bpf_imposter_kern));
-				memcpy(_imposter_g_context.data, _imposter_internal_page, 512);
-				memcpy(_imposter_g_context.key, "0453814", 7);
-				_imposter_g_context.key_size = 7;
-				for (i = 0; i < 512; ++i) {
-					ebpf_return = BPF_PROG_RUN(ebpf_prog, &_imposter_g_context);
-					if (ebpf_return != EAGAIN) {
-						break;
-					}
-				}
-				if (ebpf_return == EINVAL) {
-					printk("EBPF internal page search failed\n");
-				} else if (ebpf_return  == EAGAIN) {
-					printk("EBPF internal page search did not finish\n");
-				} else {
-					printk("EBPF internal page search result: %ld\n", _imposter_g_context.value);
-				}
-				/* leaf page test */
-				memset(&_imposter_g_context, 0, sizeof(struct bpf_imposter_kern));
-				memcpy(_imposter_g_context.data, _imposter_leaf_page, 512);
-				memcpy(_imposter_g_context.key, "100005", 6);
-				_imposter_g_context.key_size = 6;
-				for (i = 0; i < 512; ++i) {
-					ebpf_return = BPF_PROG_RUN(ebpf_prog, &_imposter_g_context);
-					if (ebpf_return != EAGAIN) {
-						break;
-					}
-				}
-				if (ebpf_return == EINVAL) {
-					printk("EBPF leaf page search failed\n");
-				} else if (ebpf_return == EAGAIN) {
-					printk("EBPF leaf page search did not finish\n");
-				} else {
-					printk("EBPF leaf page search result: %ld\n", _imposter_g_context.value);
-				}
-			}
-			rcu_read_unlock();
-			_index = req->bio->bi_iter.bi_sector >> (12 - 9);
-			_index = (_index * 1103515245 + 12345) % (1 << 23);
-			_offset = _index << 12;
-			_len = blk_rq_bytes(req);
+		/* ebpf enabled */
+		struct bpf_prog *ebpf_prog;
+		struct bpf_imposter_kern bpf_context;
+		int i;
+		u32 ebpf_return;
+		loff_t file_offset, data_len;
+		u64 disk_offset;
 
-			if (req->bio->_imposter_inode->i_op == &ext4_file_inode_operations) {
-				struct _imposter_mapping mapping;
-				_imposter_retrieve_mapping(req->bio->_imposter_inode, _offset, _len, &mapping);
-				if (!mapping.exist || mapping.len < _len || mapping.address & 0x1ff) {
-					printk("imposter: nvme driver failed to dispatch new request\n");
-					nvme_end_request(req, cqe->status, cqe->result);
-				} else {
-					req->bio->bi_iter.bi_sector = mapping.address >> 9;
-					req->__sector = req->bio->bi_iter.bi_sector;
-					req->_imposter_command.rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
-					nvme_submit_cmd(nvmeq, &req->_imposter_command, true);
-				}
-			} else {
-				req->bio->bi_iter.bi_sector = _index << (12 - 9);
-				req->__sector = req->bio->bi_iter.bi_sector;
-				req->_imposter_command.rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
-				nvme_submit_cmd(nvmeq, &req->_imposter_command, true);
+		rcu_read_lock();
+		ebpf_prog = rcu_dereference(_imposter_prog);
+		if (ebpf_prog) {
+			/* initialize context */
+			memset(&bpf_context, 0, sizeof(struct bpf_imposter_kern));
+			bpf_context.data = page_address(bio_page(req->bio));
+			bpf_context.key = page_address(req->bio->_imposter_key);
+			bpf_context.key_size = req->bio->_imposter_key_size;
+
+			/* call ebpf function */
+			for (i = 0; i < 512; ++i) {
+				ebpf_return = BPF_PROG_RUN(ebpf_prog, &_imposter_g_context);
+				if (ebpf_return != EAGAIN)
+					break;
+			}
+			if (ebpf_return == EINVAL) {
+				printk("nvme_handle_cqe: ebpf search failed\n");
+			} else if (ebpf_return  == EAGAIN) {
+				printk("nvme_handle_cqe: ebpf search did not finish\n");
+			} else if (ebpf_return != 0) {
+				printk("nvme_handle_cqe: ebpf search unknown error %d\n", ebpf_return);
 			}
 		} else {
-			nvme_end_request(req, cqe->status, cqe->result);
+			printk("nvme_handle_cqe: cannot find ebpf function\n");
+			ebpf_return = EINVAL;
 		}
+		rcu_read_unlock();
+
+		if (ebpf_return != 0) {
+			/* error happens when calling ebpf function. end the request and return */
+			nvme_end_request(req, cqe->status, cqe->result);
+			return;
+		}
+		if (!bpf_context.next_io) {
+			/* this is leaf node, finish traversal */
+			if (bpf_context.value < 0) {
+				/* value not found */
+				bpf_context.data[0] = '\0';
+				bpf_context.data[1] = 'n';
+			} else if (bpf_context.value == 0) {
+				/* empty value */
+				bpf_context.data[0] = '\0';
+				bpf_context.data[1] = 'e';
+			} else {
+				memmove(bpf_context.data, bpf_context.data + bpf_context.value, 512 - bpf_context.value);
+			}
+			nvme_end_request(req, cqe->status, cqe->result);
+			return;
+		}
+		/* address mapping */
+		file_offset = bpf_context.value;
+		data_len = 512;
+		if (req->bio->_imposter_inode->i_op == &ext4_file_inode_operations) {
+			struct _imposter_mapping mapping;
+			_imposter_retrieve_mapping(req->bio->_imposter_inode, file_offset, data_len, &mapping);
+			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
+				printk("nvme_handle_cqe: failed to retrieve address mapping\n");
+				nvme_end_request(req, cqe->status, cqe->result);
+				return;
+			} else {
+				disk_offset = mapping.address;
+			}
+		} else {
+			/* no address translation, use direct map */
+			disk_offset = file_offset;
+		}
+		req->bio->bi_iter.bi_sector = disk_offset >> 9;
+		req->__sector = req->bio->bi_iter.bi_sector;
+		req->_imposter_command.rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
+		nvme_submit_cmd(nvmeq, &req->_imposter_command, true);
 	}
 }
 

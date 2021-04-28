@@ -4265,8 +4265,8 @@ struct bpf_pidns_info {
 };
 
 struct bpf_imposter {
-	char data[512];
-	char key[16];
+	char *data;
+	char *key;
 	__u64 key_size;
 	__s64 value;
 	int next_io;

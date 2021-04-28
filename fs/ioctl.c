@@ -768,16 +768,18 @@ extern const struct inode_operations ext4_file_inode_operations;
 
 SYSCALL_DEFINE2(imposter, int, fd, int, level)
 {
+	/*
 	struct fd f = fdget_pos(fd);
 	long ret = -EBADF;
 
 	if (f.file) {
-		f.file->_imposter_level = level;
+		// f.file->_imposter_level = level;
 		if (f.file->f_inode) {
-			f.file->f_inode->_imposter_level = level;
+			// f.file->f_inode->_imposter_level = level;
+			f.file->f_inode->_imposter_enable = true;
 			if (f.file->f_inode->i_op == &ext4_file_inode_operations) {
-				_imposter_sync_ext4_extent(f.file->f_inode);
-				_imposter_print_tree(f.file->f_inode);
+				_imposter_sync_ext4_extent(f.file->f_inode, true);
+				// _imposter_print_tree(f.file->f_inode);
 			}
 		}
 		fdput_pos(f);
@@ -787,6 +789,8 @@ SYSCALL_DEFINE2(imposter, int, fd, int, level)
 	}
 
 	return ret;
+	*/
+	return 0;
 }
 
 SYSCALL_DEFINE0(init_imposter)

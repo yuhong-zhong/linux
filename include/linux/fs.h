@@ -330,8 +330,7 @@ struct kiocb {
 	u16			ki_hint;
 	u16			ki_ioprio; /* See linux/ioprio.h */
 	unsigned int		ki_cookie; /* for ->iopoll */
-	int			_imposter_count;
-
+	bool			_imposter_enable;
 	randomized_struct_fields_end
 };
 
@@ -635,7 +634,7 @@ struct fsnotify_mark_connector;
  * of the 'struct inode'
  */
 struct inode {
-	int			_imposter_level;
+	// bool			_imposter_enable;
 	struct rb_root __rcu	*_imposter_extent_root;
 	spinlock_t		_imposter_extent_lock;
 	umode_t			i_mode;
@@ -773,7 +772,7 @@ struct _imposter_mapping {
 	__u64 address;  /* disk address */
 };
 
-void _imposter_sync_ext4_extent(struct inode *inode);
+void _imposter_sync_ext4_extent(struct inode *inode, bool lock_inode);
 void _imposter_print_tree(struct inode *inode);
 void _imposter_clear_tree(struct inode *inode);
 // int _imposter_insert_extent(struct inode *inode, __u32 lblk, __u32 len, __u64 pblk);  /* not used */
@@ -983,8 +982,6 @@ struct file {
 	struct path		f_path;
 	struct inode		*f_inode;	/* cached value */
 	const struct file_operations	*f_op;
-
-	int _imposter_level;
 
 	/*
 	 * Protects f_ep_links, f_flags.

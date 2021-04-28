@@ -774,7 +774,7 @@ blk_status_t nvme_setup_cmd(struct nvme_ns *ns, struct request *req,
 	cmd->common.command_id = req->tag;
 	trace_nvme_setup_cmd(req, cmd);
 
-	if (req->bio && req->bio->_imposter_level > 0) {
+	if (req->bio && req->bio->_imposter_enable) {
 		req->_imposter_command = *cmd;
 	}
 

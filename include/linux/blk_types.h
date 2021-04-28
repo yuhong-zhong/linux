@@ -211,9 +211,10 @@ struct bio {
 
 	struct bio_set		*bi_pool;
 
-	int _imposter_level;
-	int _imposter_count;
+	bool _imposter_enable;
 	struct inode *_imposter_inode;
+	struct page *_imposter_key;
+	uint64_t _imposter_key_size;
 
 	/*
 	 * We can inline a number of vecs at the end of the bio, to avoid

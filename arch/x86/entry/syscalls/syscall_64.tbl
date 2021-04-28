@@ -362,6 +362,7 @@
 439	common	faccessat2		sys_faccessat2
 440	common	imposter		sys_imposter
 441	common	init_imposter		sys_init_imposter
+442	common	imposte_pread64		sys_imposter_pread64
 
 #
 # x32-specific system call numbers start at 512 to avoid cache impact

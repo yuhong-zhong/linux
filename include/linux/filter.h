@@ -1279,8 +1279,8 @@ struct bpf_sockopt_kern {
 };
 
 struct bpf_imposter_kern {
-	char data[512];
-	char key[16];
+	char *data;
+	char *key;
 	u64 key_size;
 	s64 value;
 	int next_io;
