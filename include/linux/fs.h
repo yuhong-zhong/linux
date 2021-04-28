@@ -773,7 +773,7 @@ struct _imposter_mapping {
 	__u64 address;  /* disk address */
 };
 
-void _imposter_sync_ext4_extent(struct inode *inode);
+void _imposter_sync_ext4_extent(struct inode *inode, bool lock_inode);
 void _imposter_print_tree(struct inode *inode);
 void _imposter_clear_tree(struct inode *inode);
 // int _imposter_insert_extent(struct inode *inode, __u32 lblk, __u32 len, __u64 pblk);  /* not used */

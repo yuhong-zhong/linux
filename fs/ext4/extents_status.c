@@ -351,12 +351,13 @@ void _imposter_rcu_free(struct rcu_head *rcu_head)
 	kfree(i_root);
 }
 
-void _imposter_sync_ext4_extent(struct inode *inode)
+void _imposter_sync_ext4_extent(struct inode *inode, bool lock_inode)
 {
 	struct _imposter_root *new_i_root, *old_i_root;
 	struct rb_root *new_root, *old_root;
 
-	read_lock(&EXT4_I(inode)->i_es_lock);
+	if (lock_inode)
+		read_lock(&EXT4_I(inode)->i_es_lock);
 	spin_lock(&inode->_imposter_extent_lock);
 
 	new_i_root = kmalloc(sizeof(struct _imposter_root), GFP_NOIO);
@@ -393,7 +394,8 @@ void _imposter_sync_ext4_extent(struct inode *inode)
 	}
 unlock:
 	spin_unlock(&inode->_imposter_extent_lock);
-	read_unlock(&EXT4_I(inode)->i_es_lock);
+	if (lock_inode)
+		read_unlock(&EXT4_I(inode)->i_es_lock);
 }
 
 /*
@@ -1175,7 +1177,7 @@ out:
 	tree->cache_es = es;
 
 	if (inode->_imposter_level > 0) {
-		_imposter_sync_ext4_extent(inode);
+		_imposter_sync_ext4_extent(inode, false);
 		_imposter_print_tree(inode);
 	}
 
@@ -1786,7 +1788,7 @@ retry:
 out:
 
 	if (inode->_imposter_level > 0) {
-		_imposter_sync_ext4_extent(inode);
+		_imposter_sync_ext4_extent(inode, false);
 		_imposter_print_tree(inode);
 	}
 

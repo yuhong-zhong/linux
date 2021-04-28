@@ -774,7 +774,7 @@ SYSCALL_DEFINE2(imposter, int, fd, int, level)
 		if (f.file->f_inode) {
 			f.file->f_inode->_imposter_level = level;
 			if (f.file->f_inode->i_op == &ext4_file_inode_operations) {
-				_imposter_sync_ext4_extent(f.file->f_inode);
+				_imposter_sync_ext4_extent(f.file->f_inode, true);
 				_imposter_print_tree(f.file->f_inode);
 			}
 		}
