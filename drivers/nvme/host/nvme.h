@@ -485,6 +485,10 @@ static inline void nvme_end_request(struct request *req, __le16 status,
 		union nvme_result result)
 {
 	struct nvme_request *rq = nvme_req(req);
+	if (req->_imposter_command) {
+		kfree(req->_imposter_command);
+		req->_imposter_command = NULL;
+	}
 
 	rq->status = le16_to_cpu(status) >> 1;
 	rq->result = result;

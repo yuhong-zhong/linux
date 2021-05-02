@@ -459,7 +459,7 @@ void _imposter_print_tree(struct inode *inode)
 
 	rcu_read_lock();
 
-	printk("imposter extent tree: (sizeof(struct _imposter_extent)=%d)\n",
+	printk("imposter extent tree: (sizeof(struct _imposter_extent)=%ld)\n",
 	       sizeof(struct _imposter_extent));
 	root = rcu_dereference(inode->_imposter_extent_root);
 	if (!root)
@@ -475,10 +475,11 @@ void _imposter_print_tree(struct inode *inode)
 		node = rb_next(node);
 	}
 out:
-	printk("  total number of extents: %llu\n", num_extents);
+	printk("  total number of extents: %lu\n", num_extents);
 
 	rcu_read_unlock();
 }
+EXPORT_SYMBOL(_imposter_print_tree);
 
 void _imposter_clear_tree(struct inode *inode)
 {
@@ -493,6 +494,7 @@ void _imposter_clear_tree(struct inode *inode)
 	}
 	spin_unlock(&inode->_imposter_extent_lock);
 }
+EXPORT_SYMBOL(_imposter_clear_tree);
 
 void _imposter_retrieve_mapping(struct inode *inode, loff_t offset, loff_t len, struct _imposter_mapping *mapping)
 {

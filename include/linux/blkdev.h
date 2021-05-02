@@ -242,7 +242,7 @@ struct request {
 		u64 fifo_time;
 	};
 
-	struct nvme_command _imposter_command;
+	struct nvme_command *_imposter_command;
 
 	/*
 	 * completion callback.

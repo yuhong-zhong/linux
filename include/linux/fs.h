@@ -319,6 +319,7 @@ enum rw_hint {
 
 struct kiocb {
 	struct file		*ki_filp;
+	bool			_imposter_enable;
 
 	/* The 'ki_filp' pointer is shared in a union for aio */
 	randomized_struct_fields_start
@@ -330,7 +331,6 @@ struct kiocb {
 	u16			ki_hint;
 	u16			ki_ioprio; /* See linux/ioprio.h */
 	unsigned int		ki_cookie; /* for ->iopoll */
-	bool			_imposter_enable;
 	randomized_struct_fields_end
 };
 

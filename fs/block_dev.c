@@ -232,12 +232,18 @@ __blkdev_direct_IO_simple(struct kiocb *iocb, struct iov_iter *iter,
 	bio.bi_end_io = blkdev_bio_end_io_simple;
 	bio.bi_ioprio = iocb->ki_ioprio;
 
+	ret = bio_iov_iter_get_pages(&bio, iter);
+	if (unlikely(ret))
+		goto out;
+	ret = bio.bi_iter.bi_size;
+
 	bio._imposter_enable = iocb->_imposter_enable;
 	bio._imposter_inode = file->f_inode;
+	bio._imposter_partition_start_sector = 0;
 	if (bio._imposter_enable) {
 		bio._imposter_key = alloc_page(GFP_NOIO);
 		if (!bio._imposter_key) {
-			printk("imposter: failed to allocate key\n");
+			printk("__blkdev_direct_IO_simple: failed to allocate key\n");
 			bio._imposter_enable = false;
 			goto imposter_out;
 		}
@@ -245,7 +251,7 @@ __blkdev_direct_IO_simple(struct kiocb *iocb, struct iov_iter *iter,
 		key_addr = page_address(bio._imposter_key);
 		bio._imposter_key_size = strnlen(data_addr, 512) + 1;
 		if (bio._imposter_key_size > 512) {
-			printk("imposter: invalid key\n");
+			printk("__blkdev_direct_IO_simple: invalid key\n");
 			__free_page(bio._imposter_key);
 			bio._imposter_enable = false;
 			goto imposter_out;
@@ -253,10 +259,6 @@ __blkdev_direct_IO_simple(struct kiocb *iocb, struct iov_iter *iter,
 		memcpy(key_addr, data_addr, bio._imposter_key_size);
 	}
 imposter_out:
-	ret = bio_iov_iter_get_pages(&bio, iter);
-	if (unlikely(ret))
-		goto out;
-	ret = bio.bi_iter.bi_size;
 
 	if (iov_iter_rw(iter) == READ) {
 		bio.bi_opf = REQ_OP_READ;
@@ -413,12 +415,20 @@ __blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter, int nr_pages)
 		bio->bi_end_io = blkdev_bio_end_io;
 		bio->bi_ioprio = iocb->ki_ioprio;
 
+		ret = bio_iov_iter_get_pages(bio, iter);
+		if (unlikely(ret)) {
+			bio->bi_status = BLK_STS_IOERR;
+			bio_endio(bio);
+			break;
+		}
+
 		bio->_imposter_enable = iocb->_imposter_enable;
 		bio->_imposter_inode = file->f_inode;
+		bio->_imposter_partition_start_sector = 0;
 		if (bio->_imposter_enable) {
 			bio->_imposter_key = alloc_page(GFP_NOIO);
 			if (!bio->_imposter_key) {
-				printk("imposter: failed to allocate key\n");
+				printk("__blkdev_direct_IO: failed to allocate key\n");
 				bio->_imposter_enable = false;
 				goto imposter_out;
 			}
@@ -426,7 +436,7 @@ __blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter, int nr_pages)
 			key_addr = page_address(bio->_imposter_key);
 			bio->_imposter_key_size = strnlen(data_addr, 512) + 1;
 			if (bio->_imposter_key_size > 512) {
-				printk("imposter: invalid key\n");
+				printk("__blkdev_direct_IO: invalid key\n");
 				__free_page(bio->_imposter_key);
 				bio->_imposter_enable = false;
 				goto imposter_out;
@@ -434,13 +444,6 @@ __blkdev_direct_IO(struct kiocb *iocb, struct iov_iter *iter, int nr_pages)
 			memcpy(key_addr, data_addr, bio->_imposter_key_size);
 		}
 imposter_out:
-
-		ret = bio_iov_iter_get_pages(bio, iter);
-		if (unlikely(ret)) {
-			bio->bi_status = BLK_STS_IOERR;
-			bio_endio(bio);
-			break;
-		}
 
 		if (is_read) {
 			bio->bi_opf = REQ_OP_READ;

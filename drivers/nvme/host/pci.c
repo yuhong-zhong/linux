@@ -863,8 +863,22 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	struct nvme_dev *dev = nvmeq->dev;
 	struct request *req = bd->rq;
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
-	struct nvme_command cmnd;
+	struct nvme_command cmnd, *cmndp;
 	blk_status_t ret;
+
+	if (req->bio && req->bio->_imposter_enable) {
+		cmndp = kmalloc(sizeof(struct nvme_command), GFP_NOWAIT);
+		if (!cmndp) {
+			printk("nvme_queue_rq: failed to allocate struct nvme_command\n");
+			cmndp = &cmnd;
+			req->_imposter_command = NULL;
+		} else {
+			req->_imposter_command = cmndp;
+		}
+	} else {
+		cmndp = &cmnd;
+		req->_imposter_command = NULL;
+	}
 
 	iod->aborted = 0;
 	iod->npages = -1;
@@ -877,24 +891,24 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	if (unlikely(!test_bit(NVMEQ_ENABLED, &nvmeq->flags)))
 		return BLK_STS_IOERR;
 
-	ret = nvme_setup_cmd(ns, req, &cmnd);
+	ret = nvme_setup_cmd(ns, req, cmndp);
 	if (ret)
 		return ret;
 
 	if (blk_rq_nr_phys_segments(req)) {
-		ret = nvme_map_data(dev, req, &cmnd);
+		ret = nvme_map_data(dev, req, cmndp);
 		if (ret)
 			goto out_free_cmd;
 	}
 
 	if (blk_integrity_rq(req)) {
-		ret = nvme_map_metadata(dev, req, &cmnd);
+		ret = nvme_map_metadata(dev, req, cmndp);
 		if (ret)
 			goto out_unmap_data;
 	}
 
 	blk_mq_start_request(req);
-	nvme_submit_cmd(nvmeq, &cmnd, bd->last);
+	nvme_submit_cmd(nvmeq, cmndp, bd->last);
 	return BLK_STS_OK;
 out_unmap_data:
 	nvme_unmap_data(dev, req);
@@ -941,12 +955,35 @@ static inline struct blk_mq_tags *nvme_queue_tagset(struct nvme_queue *nvmeq)
 }
 
 extern struct bpf_prog __rcu *_imposter_prog;
-extern struct bpf_imposter_kern _imposter_g_context;
-
-extern const char *_imposter_leaf_page;
-extern const char *_imposter_internal_page;
 
 extern const struct inode_operations ext4_file_inode_operations;
+
+static inline void ebpf_dump_page(uint8_t *page_image) {
+    int row, column, addr;
+	uint64_t page_offset = 0;
+    printk("=============================EBPF PAGE DUMP START=============================\n");
+    for (row = 0; row < 512 / 16; ++row) {
+        printk(KERN_CONT "%08llx  ", page_offset + 16 * row);
+        for (column = 0; column < 16; ++column) {
+            addr = 16 * row + column;
+            printk(KERN_CONT "%02x ", page_image[addr]);
+            if (column == 7 || column == 15) {
+                printk(KERN_CONT " ");
+            }
+        }
+        printk(KERN_CONT "|");
+        for (column = 0; column < 16; ++column) {
+            addr = 16 * row + column;
+            if (page_image[addr] >= '!' && page_image[addr] <= '~') {
+                printk(KERN_CONT "%c", page_image[addr]);
+            } else {
+                printk(KERN_CONT ".");
+            }
+        }
+        printk(KERN_CONT "|\n");
+    }
+    printk("==============================EBPF PAGE DUMP END==============================\n");
+}
 
 static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 {
@@ -992,13 +1029,13 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 		if (ebpf_prog) {
 			/* initialize context */
 			memset(&bpf_context, 0, sizeof(struct bpf_imposter_kern));
-			bpf_context.data = page_address(bio_page(req->bio));
-			bpf_context.key = page_address(req->bio->_imposter_key);
+			memcpy(bpf_context.data, page_address(bio_page(req->bio)), 512);
+			memcpy(bpf_context.key, page_address(req->bio->_imposter_key), req->bio->_imposter_key_size);
 			bpf_context.key_size = req->bio->_imposter_key_size;
 
 			/* call ebpf function */
 			for (i = 0; i < 512; ++i) {
-				ebpf_return = BPF_PROG_RUN(ebpf_prog, &_imposter_g_context);
+				ebpf_return = BPF_PROG_RUN(ebpf_prog, &bpf_context);
 				if (ebpf_return != EAGAIN)
 					break;
 			}
@@ -1017,7 +1054,9 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 
 		if (ebpf_return != 0) {
 			/* error happens when calling ebpf function. end the request and return */
-			nvme_end_request(req, cqe->status, cqe->result);
+			printk("nvme_handle_cqe: ebpf failed with search key %s\n", (char *) page_address(req->bio->_imposter_key));
+			ebpf_dump_page(page_address(bio_page(req->bio)));
+			nvme_end_request(req, NVME_SC_INVALID_OPCODE | NVME_SC_DNR, cqe->result);
 			return;
 		}
 		if (!bpf_context.next_io) {
@@ -1026,12 +1065,14 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 				/* value not found */
 				bpf_context.data[0] = '\0';
 				bpf_context.data[1] = 'n';
+				memcpy(page_address(bio_page(req->bio)), bpf_context.data, 2);
 			} else if (bpf_context.value == 0) {
 				/* empty value */
 				bpf_context.data[0] = '\0';
 				bpf_context.data[1] = 'e';
+				memcpy(page_address(bio_page(req->bio)), bpf_context.data, 2);
 			} else {
-				memmove(bpf_context.data, bpf_context.data + bpf_context.value, 512 - bpf_context.value);
+				memcpy(page_address(bio_page(req->bio)), bpf_context.data + bpf_context.value, 512 - bpf_context.value);
 			}
 			nvme_end_request(req, cqe->status, cqe->result);
 			return;
@@ -1043,8 +1084,9 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			struct _imposter_mapping mapping;
 			_imposter_retrieve_mapping(req->bio->_imposter_inode, file_offset, data_len, &mapping);
 			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
-				printk("nvme_handle_cqe: failed to retrieve address mapping\n");
-				nvme_end_request(req, cqe->status, cqe->result);
+				printk("nvme_handle_cqe: failed to retrieve address mapping with logical address 0x%llx\n", file_offset);
+				ebpf_dump_page(page_address(bio_page(req->bio)));
+				nvme_end_request(req, NVME_SC_INVALID_OPCODE | NVME_SC_DNR, cqe->result);
 				return;
 			} else {
 				disk_offset = mapping.address;
@@ -1053,10 +1095,11 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			/* no address translation, use direct map */
 			disk_offset = file_offset;
 		}
-		req->bio->bi_iter.bi_sector = disk_offset >> 9;
+		nvme_req(req)->cmd = req->_imposter_command;
+		req->bio->bi_iter.bi_sector = (disk_offset >> 9) + req->bio->_imposter_partition_start_sector;
 		req->__sector = req->bio->bi_iter.bi_sector;
-		req->_imposter_command.rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
-		nvme_submit_cmd(nvmeq, &req->_imposter_command, true);
+		req->_imposter_command->rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
+		nvme_submit_cmd(nvmeq, req->_imposter_command, true);
 	}
 }
 

@@ -282,27 +282,6 @@ iomap_dio_bio_actor(struct inode *inode, loff_t pos, loff_t length,
 		bio->bi_private = dio;
 		bio->bi_end_io = iomap_dio_bio_end_io;
 
-		bio->_imposter_enable = dio->iocb->_imposter_enable;
-		bio->_imposter_inode = dio->iocb->ki_filp->f_inode;
-		if (bio->_imposter_enable) {
-			bio->_imposter_key = alloc_page(GFP_NOIO);
-			if (!bio->_imposter_key) {
-				printk("imposter: failed to allocate key\n");
-				bio->_imposter_enable = false;
-				goto imposter_out;
-			}
-			data_addr = page_address(bio_page(bio));
-			key_addr = page_address(bio->_imposter_key);
-			bio->_imposter_key_size = strnlen(data_addr, 512) + 1;
-			if (bio->_imposter_key_size > 512) {
-				printk("imposter: invalid key\n");
-				__free_page(bio->_imposter_key);
-				bio->_imposter_enable = false;
-				goto imposter_out;
-			}
-			memcpy(key_addr, data_addr, bio->_imposter_key_size);
-		}
-imposter_out:
 		ret = bio_iov_iter_get_pages(bio, dio->submit.iter);
 		if (unlikely(ret)) {
 			/*
@@ -314,6 +293,29 @@ imposter_out:
 			bio_put(bio);
 			goto zero_tail;
 		}
+
+		bio->_imposter_enable = dio->iocb->_imposter_enable;
+		bio->_imposter_inode = dio->iocb->ki_filp->f_inode;
+		bio->_imposter_partition_start_sector = 0;
+		if (bio->_imposter_enable) {
+			bio->_imposter_key = alloc_page(GFP_NOIO);
+			if (!bio->_imposter_key) {
+				printk("iomap_dio_bio_actor: failed to allocate key\n");
+				bio->_imposter_enable = false;
+				goto imposter_out;
+			}
+			data_addr = page_address(bio_page(bio));
+			key_addr = page_address(bio->_imposter_key);
+			bio->_imposter_key_size = strnlen(data_addr, 512) + 1;
+			if (bio->_imposter_key_size > 512) {
+				printk("iomap_dio_bio_actor: invalid key\n");
+				__free_page(bio->_imposter_key);
+				bio->_imposter_enable = false;
+				goto imposter_out;
+			}
+			memcpy(key_addr, data_addr, bio->_imposter_key_size);
+		}
+imposter_out:
 
 		n = bio->bi_iter.bi_size;
 		if (dio->flags & IOMAP_DIO_WRITE) {
