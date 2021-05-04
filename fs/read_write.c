@@ -21,6 +21,8 @@
 #include <linux/mount.h>
 #include <linux/fs.h>
 #include "internal.h"
+#include <linux/bpf.h>
+#include <linux/filter.h>
 
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
@@ -612,6 +614,9 @@ ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
 	return ret;
 }
 
+extern struct bpf_prog __rcu *_imposter_prog;
+extern struct bpf_imposter_kern _imposter_g_context;
+
 SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 {
 	struct fd f;
@@ -641,7 +646,17 @@ SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 		}
 		long index = pos >> 12;
 		int i;
+		struct bpf_prog *ebpf_prog;
+		u32 ebpf_return;
 		for (i = 0; i < _imposter_level; ++i) {
+			if (i > 0) {
+				rcu_read_lock();
+				ebpf_prog = rcu_dereference(_imposter_prog);
+				if (ebpf_prog) {
+					ebpf_return = BPF_PROG_RUN(ebpf_prog, &_imposter_g_context);
+				}
+				rcu_read_unlock();
+			}
 			off_t lseek_ret = ksys_lseek(fd, index << 12, SEEK_SET);
 			if (lseek_ret != index << 12) {
 				printk("imposter read: ksys_lseek failed\n");
