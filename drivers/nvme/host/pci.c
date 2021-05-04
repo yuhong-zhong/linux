@@ -863,8 +863,22 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	struct nvme_dev *dev = nvmeq->dev;
 	struct request *req = bd->rq;
 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
-	struct nvme_command cmnd;
+	struct nvme_command cmnd, *cmndp;
 	blk_status_t ret;
+
+	if (req->bio && req->bio->_imposter_level > 0) {
+		cmndp = kmalloc(sizeof(struct nvme_command), GFP_NOWAIT);
+		if (!cmndp) {
+			printk("nvme_queue_rq: failed to allocate struct nvme_command\n");
+			cmndp = &cmnd;
+			req->_imposter_command = NULL;
+		} else {
+			req->_imposter_command = cmndp;
+		}
+	} else {
+		cmndp = &cmnd;
+		req->_imposter_command = NULL;
+	}
 
 	iod->aborted = 0;
 	iod->npages = -1;
@@ -877,24 +891,24 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	if (unlikely(!test_bit(NVMEQ_ENABLED, &nvmeq->flags)))
 		return BLK_STS_IOERR;
 
-	ret = nvme_setup_cmd(ns, req, &cmnd);
+	ret = nvme_setup_cmd(ns, req, cmndp);
 	if (ret)
 		return ret;
 
 	if (blk_rq_nr_phys_segments(req)) {
-		ret = nvme_map_data(dev, req, &cmnd);
+		ret = nvme_map_data(dev, req, cmndp);
 		if (ret)
 			goto out_free_cmd;
 	}
 
 	if (blk_integrity_rq(req)) {
-		ret = nvme_map_metadata(dev, req, &cmnd);
+		ret = nvme_map_metadata(dev, req, cmndp);
 		if (ret)
 			goto out_unmap_data;
 	}
 
 	blk_mq_start_request(req);
-	nvme_submit_cmd(nvmeq, &cmnd, bd->last);
+	nvme_submit_cmd(nvmeq, cmndp, bd->last);
 	return BLK_STS_OK;
 out_unmap_data:
 	nvme_unmap_data(dev, req);
@@ -943,9 +957,6 @@ static inline struct blk_mq_tags *nvme_queue_tagset(struct nvme_queue *nvmeq)
 extern struct bpf_prog __rcu *_imposter_prog;
 extern struct bpf_imposter_kern _imposter_g_context;
 
-extern const char *_imposter_leaf_page;
-extern const char *_imposter_internal_page;
-
 static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 {
 	struct nvme_completion *cqe = &nvmeq->cqes[idx];
@@ -986,50 +997,15 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			rcu_read_lock();
 			ebpf_prog = rcu_dereference(_imposter_prog);
 			if (ebpf_prog) {
-				/* internal page test */
-				memset(&_imposter_g_context, 0, sizeof(struct bpf_imposter_kern));
-				memcpy(_imposter_g_context.data, _imposter_internal_page, 512);
-				memcpy(_imposter_g_context.key, "0453814", 7);
-				_imposter_g_context.key_size = 7;
-				for (i = 0; i < 512; ++i) {
-					ebpf_return = BPF_PROG_RUN(ebpf_prog, &_imposter_g_context);
-					if (ebpf_return != EAGAIN) {
-						break;
-					}
-				}
-				if (ebpf_return == EINVAL) {
-					printk("EBPF internal page search failed\n");
-				} else if (ebpf_return  == EAGAIN) {
-					printk("EBPF internal page search did not finish\n");
-				} else {
-					printk("EBPF internal page search result: %ld\n", _imposter_g_context.value);
-				}
-				/* leaf page test */
-				memset(&_imposter_g_context, 0, sizeof(struct bpf_imposter_kern));
-				memcpy(_imposter_g_context.data, _imposter_leaf_page, 512);
-				memcpy(_imposter_g_context.key, "100005", 6);
-				_imposter_g_context.key_size = 6;
-				for (i = 0; i < 512; ++i) {
-					ebpf_return = BPF_PROG_RUN(ebpf_prog, &_imposter_g_context);
-					if (ebpf_return != EAGAIN) {
-						break;
-					}
-				}
-				if (ebpf_return == EINVAL) {
-					printk("EBPF leaf page search failed\n");
-				} else if (ebpf_return == EAGAIN) {
-					printk("EBPF leaf page search did not finish\n");
-				} else {
-					printk("EBPF leaf page search result: %ld\n", _imposter_g_context.value);
-				}
+				ebpf_return = BPF_PROG_RUN(ebpf_prog, &_imposter_g_context);
 			}
 			rcu_read_unlock();
 			_index = req->bio->bi_iter.bi_sector >> (12 - 9);
 			_index = (_index * 1103515245 + 12345) % (1 << 23);
 			req->bio->bi_iter.bi_sector = _index << (12 - 9);
-			req->__sector = req->bio->bi_iter.bi_sector;
-			req->_imposter_command.rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
-			nvme_submit_cmd(nvmeq, &req->_imposter_command, true);
+			req->__sector = req->bio->bi_iter.bi_sector + req->bio->_imposter_partition_start_sector;
+			req->_imposter_command->rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
+			nvme_submit_cmd(nvmeq, req->_imposter_command, true);
 		} else {
 			nvme_end_request(req, cqe->status, cqe->result);
 		}

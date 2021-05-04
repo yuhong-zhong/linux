@@ -213,6 +213,7 @@ struct bio {
 
 	int _imposter_level;
 	int _imposter_count;
+	u64 _imposter_partition_start_sector;
 
 	/*
 	 * We can inline a number of vecs at the end of the bio, to avoid
