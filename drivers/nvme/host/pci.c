@@ -958,11 +958,11 @@ extern struct bpf_prog __rcu *_imposter_prog;
 
 extern const struct inode_operations ext4_file_inode_operations;
 
-static inline void ebpf_dump_page(uint8_t *page_image) {
+static inline void ebpf_dump_page(uint8_t *page_image, uint64_t size) {
     int row, column, addr;
 	uint64_t page_offset = 0;
     printk("=============================EBPF PAGE DUMP START=============================\n");
-    for (row = 0; row < 512 / 16; ++row) {
+    for (row = 0; row < size / 16; ++row) {
         printk(KERN_CONT "%08llx  ", page_offset + 16 * row);
         for (column = 0; column < 16; ++column) {
             addr = 16 * row + column;
@@ -984,6 +984,18 @@ static inline void ebpf_dump_page(uint8_t *page_image) {
     }
     printk("==============================EBPF PAGE DUMP END==============================\n");
 }
+
+extern atomic_long_t _imposter_ebpf_time;
+extern atomic_long_t _imposter_ebpf_count;
+
+extern atomic_long_t _imposter_resubmit_leaf_time;
+extern atomic_long_t _imposter_resubmit_leaf_count;
+
+extern atomic_long_t _imposter_resubmit_int_time;
+extern atomic_long_t _imposter_resubmit_int_count;
+
+extern atomic_long_t _imposter_resubmit_level_nr;
+extern atomic_long_t _imposter_resubmit_level_count;
 
 static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 {
@@ -1018,24 +1030,22 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 	} else {
 		/* ebpf enabled */
 		struct bpf_prog *ebpf_prog;
-		struct bpf_imposter_kern bpf_context;
+		struct bpf_imposter_kern *ebpf_context;
 		int i;
 		u32 ebpf_return;
 		loff_t file_offset, data_len;
 		u64 disk_offset;
+		ktime_t ebpf_start;
+		ktime_t resubmit_start = ktime_get();
 
+		ebpf_context = (struct bpf_imposter_kern *) page_address(bio_page(req->bio));
+		ebpf_start = ktime_get();
 		rcu_read_lock();
 		ebpf_prog = rcu_dereference(_imposter_prog);
 		if (ebpf_prog) {
-			/* initialize context */
-			memset(&bpf_context, 0, sizeof(struct bpf_imposter_kern));
-			memcpy(bpf_context.data, page_address(bio_page(req->bio)), 512);
-			memcpy(bpf_context.key, page_address(req->bio->_imposter_key), req->bio->_imposter_key_size);
-			bpf_context.key_size = req->bio->_imposter_key_size;
-
 			/* call ebpf function */
 			for (i = 0; i < 512; ++i) {
-				ebpf_return = BPF_PROG_RUN(ebpf_prog, &bpf_context);
+				ebpf_return = BPF_PROG_RUN(ebpf_prog, ebpf_context);
 				if (ebpf_return != EAGAIN)
 					break;
 			}
@@ -1051,41 +1061,34 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			ebpf_return = EINVAL;
 		}
 		rcu_read_unlock();
+		atomic_long_add(ktime_sub(ktime_get(), ebpf_start), &_imposter_ebpf_time);
+		atomic_long_inc(&_imposter_ebpf_count);
 
 		if (ebpf_return != 0) {
 			/* error happens when calling ebpf function. end the request and return */
-			printk("nvme_handle_cqe: ebpf failed with search key %s\n", (char *) page_address(req->bio->_imposter_key));
-			ebpf_dump_page(page_address(bio_page(req->bio)));
+			printk("nvme_handle_cqe: ebpf failed, dump context\n");
+			ebpf_dump_page((uint8_t *) ebpf_context, 4096);
 			nvme_end_request(req, NVME_SC_INVALID_OPCODE | NVME_SC_DNR, cqe->result);
 			return;
 		}
-		if (!bpf_context.next_io) {
-			/* this is leaf node, finish traversal */
-			if (bpf_context.value < 0) {
-				/* value not found */
-				bpf_context.data[0] = '\0';
-				bpf_context.data[1] = 'n';
-				memcpy(page_address(bio_page(req->bio)), bpf_context.data, 2);
-			} else if (bpf_context.value == 0) {
-				/* empty value */
-				bpf_context.data[0] = '\0';
-				bpf_context.data[1] = 'e';
-				memcpy(page_address(bio_page(req->bio)), bpf_context.data, 2);
-			} else {
-				memcpy(page_address(bio_page(req->bio)), bpf_context.data + bpf_context.value, 512 - bpf_context.value);
-			}
+		if (ebpf_context->done) {
+			/* finish traversal */
+			atomic_long_add(ktime_sub(ktime_get(), resubmit_start), &_imposter_resubmit_leaf_time);
+			atomic_long_inc(&_imposter_resubmit_leaf_count);
+			atomic_long_add(req->bio->_imposter_count, &_imposter_resubmit_level_nr);
+			atomic_long_inc(&_imposter_resubmit_level_count);
 			nvme_end_request(req, cqe->status, cqe->result);
 			return;
 		}
 		/* address mapping */
-		file_offset = bpf_context.value;
+		file_offset = ebpf_context->next_addr[0];
 		data_len = 512;
 		if (req->bio->_imposter_inode->i_op == &ext4_file_inode_operations) {
 			struct _imposter_mapping mapping;
 			_imposter_retrieve_mapping(req->bio->_imposter_inode, file_offset, data_len, &mapping);
 			if (!mapping.exist || mapping.len < data_len || mapping.address & 0x1ff) {
-				printk("nvme_handle_cqe: failed to retrieve address mapping with logical address 0x%llx\n", file_offset);
-				ebpf_dump_page(page_address(bio_page(req->bio)));
+				printk("nvme_handle_cqe: failed to retrieve address mapping with logical address 0x%llx, dump context\n", file_offset);
+				ebpf_dump_page((uint8_t *) ebpf_context, 4096);
 				nvme_end_request(req, NVME_SC_INVALID_OPCODE | NVME_SC_DNR, cqe->result);
 				return;
 			} else {
@@ -1096,9 +1099,12 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			disk_offset = file_offset;
 		}
 		nvme_req(req)->cmd = req->_imposter_command;
+		req->bio->_imposter_count += 1;
 		req->bio->bi_iter.bi_sector = (disk_offset >> 9) + req->bio->_imposter_partition_start_sector;
 		req->__sector = req->bio->bi_iter.bi_sector;
 		req->_imposter_command->rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
+		atomic_long_add(ktime_sub(ktime_get(), resubmit_start), &_imposter_resubmit_int_time);
+		atomic_long_inc(&_imposter_resubmit_int_count);
 		nvme_submit_cmd(nvmeq, req->_imposter_command, true);
 	}
 }

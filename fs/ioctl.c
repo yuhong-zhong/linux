@@ -766,6 +766,26 @@ SYSCALL_DEFINE3(ioctl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 
 extern const struct inode_operations ext4_file_inode_operations;
 
+atomic_long_t _imposter_ebpf_time;
+EXPORT_SYMBOL(_imposter_ebpf_time);
+atomic_long_t _imposter_ebpf_count;
+EXPORT_SYMBOL(_imposter_ebpf_count);
+
+atomic_long_t _imposter_resubmit_leaf_time;
+EXPORT_SYMBOL(_imposter_resubmit_leaf_time);
+atomic_long_t _imposter_resubmit_leaf_count;
+EXPORT_SYMBOL(_imposter_resubmit_leaf_count);
+
+atomic_long_t _imposter_resubmit_int_time;
+EXPORT_SYMBOL(_imposter_resubmit_int_time);
+atomic_long_t _imposter_resubmit_int_count;
+EXPORT_SYMBOL(_imposter_resubmit_int_count);
+
+atomic_long_t _imposter_resubmit_level_nr;
+EXPORT_SYMBOL(_imposter_resubmit_level_nr);
+atomic_long_t _imposter_resubmit_level_count;
+EXPORT_SYMBOL(_imposter_resubmit_level_count);
+
 SYSCALL_DEFINE2(imposter, int, fd, int, level)
 {
 	/*
@@ -795,6 +815,14 @@ SYSCALL_DEFINE2(imposter, int, fd, int, level)
 
 SYSCALL_DEFINE0(init_imposter)
 {
+	printk("_imposter_ebpf_time: %ld\n", atomic_long_xchg(&_imposter_ebpf_time, 0));
+	printk("_imposter_ebpf_count: %ld\n", atomic_long_xchg(&_imposter_ebpf_count, 0));
+	printk("_imposter_resubmit_int_time: %ld\n", atomic_long_xchg(&_imposter_resubmit_int_time, 0));
+	printk("_imposter_resubmit_int_count: %ld\n", atomic_long_xchg(&_imposter_resubmit_int_count, 0));
+	printk("_imposter_resubmit_leaf_time: %ld\n", atomic_long_xchg(&_imposter_resubmit_leaf_time, 0));
+	printk("_imposter_resubmit_leaf_count: %ld\n", atomic_long_xchg(&_imposter_resubmit_leaf_count, 0));
+	printk("_imposter_resubmit_level_nr: %ld\n", atomic_long_xchg(&_imposter_resubmit_level_nr, 0));
+	printk("_imposter_resubmit_level_count: %ld\n", atomic_long_xchg(&_imposter_resubmit_level_count, 0));
 	return 0;
 }
 

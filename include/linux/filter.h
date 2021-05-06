@@ -1280,11 +1280,10 @@ struct bpf_sockopt_kern {
 
 struct bpf_imposter_kern {
 	char data[512];
-	char key[64];
-	u64 key_size;
-	s64 value;
-	int next_io;
-	char scratch[512];
+	int32_t done;
+	uint64_t next_addr[16];
+	uint64_t size[16];
+	char scratch[3320];
 };
 
 #endif /* __LINUX_FILTER_H__ */

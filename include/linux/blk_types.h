@@ -213,9 +213,8 @@ struct bio {
 
 	bool _imposter_enable;
 	struct inode *_imposter_inode;
-	struct page *_imposter_key;
-	uint64_t _imposter_key_size;
 	u64 _imposter_partition_start_sector;
+	int _imposter_count;
 
 	/*
 	 * We can inline a number of vecs at the end of the bio, to avoid

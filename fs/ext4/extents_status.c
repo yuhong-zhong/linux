@@ -514,8 +514,8 @@ void _imposter_retrieve_mapping(struct inode *inode, loff_t offset, loff_t len, 
 	if (!i_extent || i_extent->lblk > i_lblk_end) {
 		mapping->exist = false;
 	} else {
-		loff_t in_extent_offset = offset - (i_extent->lblk << _IMPOSTER_BLOCK_SHIFT);
-		loff_t in_extent_len = min(len, (i_extent->len << _IMPOSTER_BLOCK_SHIFT)
+		loff_t in_extent_offset = offset - (((u64)i_extent->lblk) << _IMPOSTER_BLOCK_SHIFT);
+		loff_t in_extent_len = min(len, (((u64)i_extent->len) << _IMPOSTER_BLOCK_SHIFT)
 		                                - in_extent_offset);
 
 		mapping->exist = true;

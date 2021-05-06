@@ -4266,11 +4266,10 @@ struct bpf_pidns_info {
 
 struct bpf_imposter {
 	char data[512];
-	char key[64];
-	__u64 key_size;
-	__s64 value;
-	int next_io;
-	char scratch[512];
+	__s32 done;
+	__u64 next_addr[16];
+	__u64 size[16];
+	char scratch[3320];
 };
 
 #endif /* _UAPI__LINUX_BPF_H__ */
