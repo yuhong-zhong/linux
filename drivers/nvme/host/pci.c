@@ -29,6 +29,7 @@
 
 #include "trace.h"
 #include "nvme.h"
+#include "wt.h"
 
 #define SQ_SIZE(q)	((q)->q_depth << (q)->sqes)
 #define CQ_SIZE(q)	((q)->q_depth * sizeof(struct nvme_completion))
@@ -1040,6 +1041,9 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 
 		ebpf_context = (struct bpf_imposter_kern *) page_address(bio_page(req->bio));
 		ebpf_start = ktime_get();
+#ifdef KERN_EBPF
+		ebpf_return = ebpf_lookup_kern(ebpf_context);
+#else
 		rcu_read_lock();
 		ebpf_prog = rcu_dereference(_imposter_prog);
 		if (ebpf_prog) {
@@ -1061,6 +1065,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 			ebpf_return = EINVAL;
 		}
 		rcu_read_unlock();
+#endif
 		atomic_long_add(ktime_sub(ktime_get(), ebpf_start), &_imposter_ebpf_time);
 		atomic_long_inc(&_imposter_ebpf_count);
 
