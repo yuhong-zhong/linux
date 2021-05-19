@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
-obj-y := core.o
+obj-y := core.o wt.o
 CFLAGS_core.o += $(call cc-disable-warning, override-init)
 
 obj-$(CONFIG_BPF_SYSCALL) += syscall.o verifier.o inode.o helpers.o tnum.o bpf_iter.o map_iter.o task_iter.o

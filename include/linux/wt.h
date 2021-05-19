@@ -116,21 +116,21 @@ int ebpf_unpack_posint(uint8_t **pp, uint64_t *retp);
 int ebpf_vunpack_uint(uint8_t **pp, uint64_t *xp);
 int ebpf_addr_to_offset(uint8_t *addr, uint64_t *offset, uint64_t *size);
 int ebpf_get_cell_type(uint8_t *cell);
-int ebpf_parse_cell_addr(uint8_t **cellp, uint64_t *offset, uint64_t *size, 
+int ebpf_parse_cell_addr(uint8_t **cellp, uint64_t *offset, uint64_t *size,
                          bool update_pointer);
-int ebpf_parse_cell_key(uint8_t **cellp, uint8_t **key, uint64_t *key_size, 
+int ebpf_parse_cell_key(uint8_t **cellp, uint8_t **key, uint64_t *key_size,
                         bool update_pointer);
-int ebpf_parse_cell_short_key(uint8_t **cellp, uint8_t **key, uint64_t *key_size, 
+int ebpf_parse_cell_short_key(uint8_t **cellp, uint8_t **key, uint64_t *key_size,
                               bool update_pointer);
-int ebpf_parse_cell_value(uint8_t **cellp, uint8_t **value, uint64_t *value_size, 
+int ebpf_parse_cell_value(uint8_t **cellp, uint8_t **value, uint64_t *value_size,
                           bool update_pointer);
-int ebpf_parse_cell_short_value(uint8_t **cellp, uint8_t **value, uint64_t *value_size, 
+int ebpf_parse_cell_short_value(uint8_t **cellp, uint8_t **value, uint64_t *value_size,
                                 bool update_pointer);
 int ebpf_get_page_type(uint8_t *page_image);
-int ebpf_search_int_page(uint8_t *page_image, 
+int ebpf_search_int_page(uint8_t *page_image,
                          uint8_t *user_key_buf, uint64_t user_key_size,
                          uint64_t *descent_offset, uint64_t *descent_size, uint64_t *descent_index);
-int ebpf_search_leaf_page(uint8_t *page_image, 
+int ebpf_search_leaf_page(uint8_t *page_image,
                           uint8_t *user_key_buf, uint64_t user_key_size,
                           uint8_t **value_buf, uint64_t *value_size, uint64_t *descent_index);
 void ebpf_dump_page(uint8_t *page_image, uint64_t size);

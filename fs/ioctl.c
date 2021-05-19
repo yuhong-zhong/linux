@@ -21,6 +21,7 @@
 #include <linux/fiemap.h>
 #include <linux/bpf.h>
 #include <linux/filter.h>
+#include <linux/wt.h>
 
 #include "internal.h"
 
@@ -786,6 +787,9 @@ EXPORT_SYMBOL(_imposter_resubmit_level_nr);
 atomic_long_t _imposter_resubmit_level_count;
 EXPORT_SYMBOL(_imposter_resubmit_level_count);
 
+struct bpf_prog __rcu *_imposter_prog;
+EXPORT_SYMBOL(_imposter_prog);
+
 SYSCALL_DEFINE2(imposter, int, fd, int, level)
 {
 	/*
@@ -813,6 +817,59 @@ SYSCALL_DEFINE2(imposter, int, fd, int, level)
 	return 0;
 }
 
+SYSCALL_DEFINE1(test_bpf, char __user *, buf)
+{
+	struct page *user_page;
+	struct bpf_prog *ebpf_prog;
+	struct bpf_imposter_kern *ebpf_context;
+	int i, ret;
+	u32 ebpf_return;
+	ktime_t ebpf_start;
+
+	ret = get_user_pages_fast(buf, 1, FOLL_WRITE, &user_page);
+	if (ret != 1) {
+		printk("test_bpf: failed to pin user page\n");
+		return -EINVAL;
+	}
+
+	ebpf_context = (struct bpf_imposter_kern *) page_address(user_page);
+	ebpf_start = ktime_get();
+#ifdef KERN_EBPF
+	ebpf_return = ebpf_lookup_kern(ebpf_context);
+#else
+	rcu_read_lock();
+	ebpf_prog = rcu_dereference(_imposter_prog);
+	if (ebpf_prog) {
+		/* call ebpf function */
+		for (i = 0; i < 512; ++i) {
+			ebpf_return = BPF_PROG_RUN(ebpf_prog, ebpf_context);
+			if (ebpf_return != EAGAIN)
+				break;
+		}
+		if (ebpf_return == EINVAL) {
+			printk("nvme_handle_cqe: ebpf search failed\n");
+		} else if (ebpf_return  == EAGAIN) {
+			printk("nvme_handle_cqe: ebpf search did not finish\n");
+		} else if (ebpf_return != 0) {
+			printk("nvme_handle_cqe: ebpf search unknown error %d\n", ebpf_return);
+		}
+	} else {
+		printk("nvme_handle_cqe: cannot find ebpf function\n");
+		ebpf_return = EINVAL;
+	}
+	rcu_read_unlock();
+#endif
+	atomic_long_add(ktime_sub(ktime_get(), ebpf_start), &_imposter_ebpf_time);
+	atomic_long_inc(&_imposter_ebpf_count);
+
+	if (ebpf_return != 0) {
+		ebpf_dump_page(page_address(user_page), 4096);
+	}
+
+	put_page(user_page);
+	return 0;
+}
+
 SYSCALL_DEFINE0(init_imposter)
 {
 	printk("_imposter_ebpf_time: %ld\n", atomic_long_xchg(&_imposter_ebpf_time, 0));
@@ -825,9 +882,6 @@ SYSCALL_DEFINE0(init_imposter)
 	printk("_imposter_resubmit_level_count: %ld\n", atomic_long_xchg(&_imposter_resubmit_level_count, 0));
 	return 0;
 }
-
-struct bpf_prog __rcu *_imposter_prog;
-EXPORT_SYMBOL(_imposter_prog);
 
 int _imposter_bpf_prog_attach(const union bpf_attr *attr, struct bpf_prog *prog)
 {

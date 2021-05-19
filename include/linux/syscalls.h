@@ -1428,5 +1428,6 @@ long compat_ksys_semtimedop(int semid, struct sembuf __user *tsems,
 
 asmlinkage long sys_imposter(int fd, int level);
 asmlinkage long sys_init_imposter(void);
+asmlinkage long sys_test_bpf(char __user *buf);
 
 #endif

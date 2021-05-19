@@ -1,8 +1,8 @@
-#include "wt.h"
+#include <linux/wt.h>
 
 int ebpf_lex_compare(uint8_t *key_1, uint64_t key_len_1,
                      uint8_t *key_2, uint64_t key_len_2) {
-    /* extracted from https://github.com/wiredtiger/wiredtiger/blob/mongodb-4.4.0/src/include/btree_cmp.i#L90 
+    /* extracted from https://github.com/wiredtiger/wiredtiger/blob/mongodb-4.4.0/src/include/btree_cmp.i#L90
      * ( might consider replace with vector operation :) although not sure whether ebpf supports it )
      */
     uint64_t len = (key_len_1 > key_len_2) ? key_len_2 : key_len_1, max_len = EBPF_KEY_MAX_LEN;
@@ -95,7 +95,7 @@ int ebpf_get_cell_type(uint8_t *cell) {
     return EBPF_CELL_SHORT_TYPE(cell[0]) ? EBPF_CELL_SHORT_TYPE(cell[0]) : EBPF_CELL_TYPE(cell[0]);
 }
 
-int ebpf_parse_cell_addr(uint8_t **cellp, uint64_t *offset, uint64_t *size, 
+int ebpf_parse_cell_addr(uint8_t **cellp, uint64_t *offset, uint64_t *size,
                          bool update_pointer) {
     uint8_t *cell = *cellp, *p = *cellp, *addr;
     uint8_t flags;
@@ -138,7 +138,7 @@ int ebpf_parse_cell_addr(uint8_t **cellp, uint64_t *offset, uint64_t *size,
     return 0;
 }
 
-int ebpf_parse_cell_key(uint8_t **cellp, uint8_t **key, uint64_t *key_size, 
+int ebpf_parse_cell_key(uint8_t **cellp, uint8_t **key, uint64_t *key_size,
                         bool update_pointer) {
     uint8_t *cell = *cellp, *p = *cellp;
     uint64_t data_len;
@@ -168,7 +168,7 @@ int ebpf_parse_cell_key(uint8_t **cellp, uint8_t **key, uint64_t *key_size,
     return 0;
 }
 
-int ebpf_parse_cell_short_key(uint8_t **cellp, uint8_t **key, uint64_t *key_size, 
+int ebpf_parse_cell_short_key(uint8_t **cellp, uint8_t **key, uint64_t *key_size,
                               bool update_pointer) {
     uint8_t *cell = *cellp, *p = *cellp;
     uint64_t data_len;
@@ -200,7 +200,7 @@ WT_CELL_FOREACH_ADDR: https://github.com/wiredtiger/wiredtiger/blob/mongodb-4.4.
 __wt_cell_unpack_safe: https://github.com/wiredtiger/wiredtiger/blob/mongodb-4.4.0/src/include/cell.i#L663
 __wt_row_search: https://github.com/wiredtiger/wiredtiger/blob/mongodb-4.4.0/src/btree/row_srch.c#L331
 */
-int ebpf_search_int_page(uint8_t *page_image, 
+int ebpf_search_int_page(uint8_t *page_image,
                          uint8_t *user_key_buf, uint64_t user_key_size,
                          uint64_t *descent_offset, uint64_t *descent_size, uint64_t *descent_index) {
     uint8_t *p = page_image;
@@ -240,25 +240,25 @@ int ebpf_search_int_page(uint8_t *page_image,
         case EBPF_CELL_KEY:
             ret = ebpf_parse_cell_key(&p, &cell_key_buf, &cell_key_size, true);
             if (ret < 0) {
-                printk("ebpf_search_int_page: ebpf_parse_cell_key failed, kv %d, offset %ld, ret %d\n", i, (uint64_t)(p - page_image), ret);
+                printk("ebpf_search_int_page: ebpf_parse_cell_key failed, kv %d, offset %lld, ret %d\n", i, (uint64_t)(p - page_image), ret);
                 return ret;
             }
             break;
         case EBPF_CELL_KEY_SHORT:
             ret = ebpf_parse_cell_short_key(&p, &cell_key_buf, &cell_key_size, true);
             if (ret < 0) {
-                printk("ebpf_search_int_page: ebpf_parse_cell_short_key failed, kv %d, offset %ld, ret %d\n", i, (uint64_t)(p - page_image), ret);
+                printk("ebpf_search_int_page: ebpf_parse_cell_short_key failed, kv %d, offset %lld, ret %d\n", i, (uint64_t)(p - page_image), ret);
                 return ret;
             }
             break;
         default:
-            printk("ebpf_search_int_page: invalid cell type %d, kv %d, offset %ld\n", ebpf_get_cell_type(p), i, (uint64_t)(p - page_image));
+            printk("ebpf_search_int_page: invalid cell type %d, kv %d, offset %lld\n", ebpf_get_cell_type(p), i, (uint64_t)(p - page_image));
             return -EBPF_EINVAL;
         }
         /* parse addr cell */
         ret = ebpf_parse_cell_addr(&p, &cell_descent_offset, &cell_descent_size, true);
         if (ret < 0) {
-            printk("ebpf_search_int_page: ebpf_parse_cell_addr failed, kv %d, offset %ld, ret %d\n", i, (uint64_t)(p - page_image), ret);
+            printk("ebpf_search_int_page: ebpf_parse_cell_addr failed, kv %d, offset %lld, ret %d\n", i, (uint64_t)(p - page_image), ret);
             return ret;
         }
 

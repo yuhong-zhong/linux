@@ -17,6 +17,37 @@
 
 #include "../../lib/kstrtox.h"
 
+#include <linux/uaccess.h>
+
+#define copy_from_kernel_nofault_loop(dst, src, len, type, err_label)	\
+	while (len >= sizeof(type)) {					\
+		__get_kernel_nofault(dst, src, type, err_label);		\
+		dst += sizeof(type);					\
+		src += sizeof(type);					\
+		len -= sizeof(type);					\
+	}
+
+BPF_CALL_3(bpf_imposter_read, void *, dst, u32, size,
+	   const void *, unsafe_ptr)
+{
+	copy_from_kernel_nofault_loop(dst, unsafe_ptr, size, u64, Efault);
+	copy_from_kernel_nofault_loop(dst, unsafe_ptr, size, u32, Efault);
+	copy_from_kernel_nofault_loop(dst, unsafe_ptr, size, u16, Efault);
+	copy_from_kernel_nofault_loop(dst, unsafe_ptr, size, u8, Efault);
+	return 0;
+Efault:
+	return -EFAULT;
+}
+
+const struct bpf_func_proto bpf_imposter_read_proto = {
+	.func		= bpf_imposter_read,
+	.gpl_only	= true,
+	.ret_type	= RET_INTEGER,
+	.arg1_type	= ARG_PTR_TO_UNINIT_MEM,
+	.arg2_type	= ARG_CONST_SIZE_OR_ZERO,
+	.arg3_type	= ARG_ANYTHING,
+};
+
 /* If kernel subsystem is allowing eBPF programs to call this function,
  * inside its own verifier_ops->get_func_proto() callback it should return
  * bpf_map_lookup_elem_proto, so that verifier can properly check the arguments
@@ -645,6 +676,8 @@ bpf_base_func_proto(enum bpf_func_id func_id)
 		return &bpf_ringbuf_discard_proto;
 	case BPF_FUNC_ringbuf_query:
 		return &bpf_ringbuf_query_proto;
+	case BPF_FUNC_imposter_read:
+		return &bpf_imposter_read_proto;
 	default:
 		break;
 	}

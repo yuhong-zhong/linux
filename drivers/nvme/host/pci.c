@@ -26,10 +26,10 @@
 #include <linux/pci-p2pdma.h>
 #include <linux/bpf.h>
 #include <linux/filter.h>
+#include <linux/wt.h>
 
 #include "trace.h"
 #include "nvme.h"
-#include "wt.h"
 
 #define SQ_SIZE(q)	((q)->q_depth << (q)->sqes)
 #define CQ_SIZE(q)	((q)->q_depth * sizeof(struct nvme_completion))
@@ -958,33 +958,6 @@ static inline struct blk_mq_tags *nvme_queue_tagset(struct nvme_queue *nvmeq)
 extern struct bpf_prog __rcu *_imposter_prog;
 
 extern const struct inode_operations ext4_file_inode_operations;
-
-static inline void ebpf_dump_page(uint8_t *page_image, uint64_t size) {
-    int row, column, addr;
-	uint64_t page_offset = 0;
-    printk("=============================EBPF PAGE DUMP START=============================\n");
-    for (row = 0; row < size / 16; ++row) {
-        printk(KERN_CONT "%08llx  ", page_offset + 16 * row);
-        for (column = 0; column < 16; ++column) {
-            addr = 16 * row + column;
-            printk(KERN_CONT "%02x ", page_image[addr]);
-            if (column == 7 || column == 15) {
-                printk(KERN_CONT " ");
-            }
-        }
-        printk(KERN_CONT "|");
-        for (column = 0; column < 16; ++column) {
-            addr = 16 * row + column;
-            if (page_image[addr] >= '!' && page_image[addr] <= '~') {
-                printk(KERN_CONT "%c", page_image[addr]);
-            } else {
-                printk(KERN_CONT ".");
-            }
-        }
-        printk(KERN_CONT "|\n");
-    }
-    printk("==============================EBPF PAGE DUMP END==============================\n");
-}
 
 extern atomic_long_t _imposter_ebpf_time;
 extern atomic_long_t _imposter_ebpf_count;

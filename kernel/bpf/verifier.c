@@ -3022,6 +3022,8 @@ int check_ctx_reg(struct bpf_verifier_env *env,
 	 * its original, unmodified form.
 	 */
 
+	return 0;
+
 	if (reg->off) {
 		verbose(env, "dereference of modified ctx ptr R%d off=%d disallowed\n",
 			regno, reg->off);

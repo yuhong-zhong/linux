@@ -363,6 +363,7 @@
 440	common	imposter		sys_imposter
 441	common	init_imposter		sys_init_imposter
 442	common	imposte_pread64		sys_imposter_pread64
+443	common	test_bpf		sys_test_bpf
 
 #
 # x32-specific system call numbers start at 512 to avoid cache impact
