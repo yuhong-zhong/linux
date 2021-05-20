@@ -136,6 +136,7 @@ enum pageflags {
 	PG_young,
 	PG_idle,
 #endif
+	PG_colored,
 #ifdef CONFIG_64BIT
 	PG_arch_2,
 #endif
@@ -342,6 +343,7 @@ PAGEFLAG(Workingset, workingset, PF_HEAD)
 __PAGEFLAG(Slab, slab, PF_NO_TAIL)
 __PAGEFLAG(SlobFree, slob_free, PF_NO_TAIL)
 PAGEFLAG(Checked, checked, PF_NO_COMPOUND)	   /* Used by some filesystems */
+PAGEFLAG(Colored, colored, PF_NO_COMPOUND)
 
 /* Xen */
 PAGEFLAG(Pinned, pinned, PF_NO_COMPOUND)
