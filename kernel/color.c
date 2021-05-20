@@ -129,3 +129,11 @@ SYSCALL_DEFINE3(get_color, pid_t, pid, unsigned int, len,
 
 	return ret;
 }
+
+SYSCALL_DEFINE1(reserve_color, long, nr_page)
+{
+	int nid;
+	for_each_online_node(nid)
+		rebalance_colormem(nid, nr_page);
+	return 0;
+}

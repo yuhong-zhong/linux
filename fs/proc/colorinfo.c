@@ -26,9 +26,9 @@ static int colorinfo_proc_show(struct seq_file *m, void *v)
 		goto out;
 	}
 	for (i = 0; i < nr_entry; i++) {
-		seq_printf(m, "numa[%d] - color[%d]: free %lu, allocation %lu\n",
+		seq_printf(m, "numa[%d] - color[%d]:\tfree %lu, allocated %lu\n",
 		           ci[i].nid, ci[i].color,
-		           ci[i].total_free_pages, ci[i].total_allocations);
+		           ci[i].total_free_pages, ci[i].total_allocated_pages);
 	}
 	kfree(ci);
 out:

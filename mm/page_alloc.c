@@ -79,8 +79,11 @@ struct free_color_area {
 	struct list_head free_list;
 	spinlock_t lock;
 	unsigned long nr_free;
-	unsigned long nr_allocation;
+	unsigned long nr_allocated;
 };
+
+/* TODO: register a reclaimer */
+/* TODO: add hooks to other free page locations (e.g., OOM reaper) */
 
 struct free_color_area color_area_arr[MAX_NUMNODES][NR_COLORS];
 
@@ -101,7 +104,7 @@ int get_colorinfo(struct colorinfo **ci)
 			(*ci)[i].nid = nid;
 			(*ci)[i].color = color;
 			(*ci)[i].total_free_pages = color_area_arr[nid][color].nr_free;
-			(*ci)[i].total_allocations = color_area_arr[nid][color].nr_allocation;
+			(*ci)[i].total_allocated_pages = color_area_arr[nid][color].nr_allocated;
 			++i;
 		}
 	}
@@ -111,24 +114,45 @@ EXPORT_SYMBOL(get_colorinfo);
 
 int get_page_color(struct page *page)
 {
-	int nid = page_to_nid(page);
-	phys_addr_t addr = page_to_pfn(page) << PAGE_SHIFT;
-	phys_addr_t node_base_addr = NODE_DATA(nid)->node_start_pfn << PAGE_SHIFT;
+	int nid;
+	phys_addr_t addr, node_base_addr, dram_addr;
+	unsigned long dram_pfn;
+	unsigned long tmp_1, tmp_2;
+	// unsigned long tmp_3;
 
-	return ((addr - node_base_addr) % DRAM_SIZE_PER_NODE) / COLOR_SIZE;
+	nid = page_to_nid(page);
+	addr = page_to_pfn(page) << PAGE_SHIFT;
+	node_base_addr = NODE_DATA(nid)->node_start_pfn << PAGE_SHIFT;
+	if (node_base_addr == (1l << PAGE_SHIFT))
+		node_base_addr = 0;
+	dram_addr = (addr - node_base_addr) % DRAM_SIZE_PER_NODE;
+	dram_pfn = dram_addr >> PAGE_SHIFT;
+
+	tmp_1 = dram_pfn % NR_COLORS;
+	tmp_2 = dram_pfn / NR_COLORS;
+	// tmp_2 ^= tmp_2 << 13;
+	// tmp_2 ^= tmp_2 >> 7;
+	// tmp_2 ^= tmp_2 << 17;
+	// tmp_2 = tmp_2 % NR_COLORS;
+
+	// tmp_3 = (((tmp_2 >> 32) * 2654435761u) & 0xffffffff) << 32;
+	// tmp_3 |= (((tmp_2 & 0xffffffff) * 2654435761u) & 0xffffffff);
+	// tmp_2 = tmp_3;
+
+	return (tmp_1 + tmp_2) % NR_COLORS;
 }
 EXPORT_SYMBOL(get_page_color);
 
-static bool atomic_check_free_color_page(int nid, int color)
+static long atomic_nr_free_color_page(int nid, int color)
 {
-	bool is_empty;
+	long nr_free_page;
 	spin_lock(&color_area_arr[nid][color].lock);
-	is_empty = list_empty(&color_area_arr[nid][color].free_list);
+	nr_free_page = color_area_arr[nid][color].nr_free;
 	spin_unlock(&color_area_arr[nid][color].lock);
-	return !is_empty;
+	return nr_free_page;
 }
 
-static struct page *atomic_get_color_page(int nid, int color)
+static struct page *atomic_get_free_color_page(int nid, int color)
 {
 	struct page *page = NULL;
 
@@ -137,7 +161,7 @@ static struct page *atomic_get_color_page(int nid, int color)
 		page = list_first_entry(&color_area_arr[nid][color].free_list, struct page, lru);
 		list_del_init(&page->lru);
 		--color_area_arr[nid][color].nr_free;
-		++color_area_arr[nid][color].nr_allocation;
+		++color_area_arr[nid][color].nr_allocated;
 	}
 	spin_unlock(&color_area_arr[nid][color].lock);
 	return page;
@@ -154,23 +178,76 @@ static void atomic_insert_free_color_page(struct page *page)
 	spin_unlock(&color_area_arr[nid][color].lock);
 }
 
-int refill_color_page(int nid, long nr_pages)
+static bool atomic_release_free_color_page(int nid, int color)
 {
-	nodemask_t nodemask = NODE_MASK_NONE;
-	struct page *page;
-	long i;
+	struct page *page = NULL;
 
-	node_set(nid, nodemask);
-	for (i = 0; i < nr_pages; ++i) {
-		page = __alloc_pages_nodemask(GFP_KERNEL, 0, nid, &nodemask);
-		if (page == NULL) {
-			break;
-		}
-		atomic_insert_free_color_page(page);
+	spin_lock(&color_area_arr[nid][color].lock);
+	if (!list_empty(&color_area_arr[nid][color].free_list)) {
+		page = list_first_entry(&color_area_arr[nid][color].free_list, struct page, lru);
+		list_del_init(&page->lru);
+		--color_area_arr[nid][color].nr_free;
 	}
-	return i;
+	spin_unlock(&color_area_arr[nid][color].lock);
+
+	if (page)
+		__free_page(page);
+	return page != NULL;
 }
-EXPORT_SYMBOL(refill_color_page);
+
+void rebalance_colormem(int nid, long nr_page)
+{
+	nodemask_t nodemask;
+	struct page *page;
+	int color;
+	long nr_page_target, credit;
+	long reschedule_count = COLOR_RESCHEDULE_COUNT;
+
+	if (nr_page > NR_COLOR_PAGE_MAX) {
+		nr_page = NR_COLOR_PAGE_MAX;
+		printk("rebalance_colormem: nr_page too large\n");
+	}
+
+	/* refill */
+	nodemask = NODE_MASK_NONE;
+	node_set(nid, nodemask);
+	for (color = 0; color < NR_COLORS; ++color) {
+		nr_page_target = nr_page - atomic_nr_free_color_page(nid, color);
+		credit = COLOR_ALLOC_MAX_ATTEMPT;
+		while (nr_page_target > 0 && credit > 0) {
+			page = __alloc_pages_nodemask(__GFP_HIGHMEM, 0, nid, &nodemask);
+			if (!page)
+				break;
+			if (color == get_page_color(page)) {
+				--nr_page_target;
+				credit = COLOR_ALLOC_MAX_ATTEMPT;
+			} else {
+				--credit;
+			}
+
+			/*
+			 * don't release the page even if the color does not matched,
+			 * otherwise we might be spinning on the same page
+			 */
+			atomic_insert_free_color_page(page);
+
+			if ((--reschedule_count) == 0) {
+				schedule();
+				reschedule_count = COLOR_RESCHEDULE_COUNT;
+			}
+		}
+	}
+
+	/* release */
+	for (color = 0; color < NR_COLORS; ++color) {
+		nr_page_target = atomic_nr_free_color_page(nid, color) - nr_page;
+		while (nr_page_target > 0) {
+			atomic_release_free_color_page(nid, color);
+			--nr_page_target;
+		}
+	}
+}
+EXPORT_SYMBOL(rebalance_colormem);
 
 struct page *alloc_color_page(nodemask_t *nodemask, int preferred_nid,
                               colormask_t *colormask, int preferred_color)
@@ -178,7 +255,6 @@ struct page *alloc_color_page(nodemask_t *nodemask, int preferred_nid,
 	struct page *page = NULL;
 	bool node_retry = false, color_retry = false;
 	int nid, color;
-	int refill_ret;
 
 retry_node:
 	for_each_node_mask(nid, *nodemask) {
@@ -188,15 +264,7 @@ retry_color:
 		for_each_color(color, colormask) {
 			if (!color_retry && color < preferred_color)
 				continue;
-
-			/* try really hard to allocate pages */
-			while (!atomic_check_free_color_page(nid, color)) {
-				refill_ret = refill_color_page(nid, NR_REFILL_COLOR_PAGE);
-				if (refill_ret < NR_REFILL_COLOR_PAGE)
-					break;
-			}
-
-			page = atomic_get_color_page(nid, color);
+			page = atomic_get_free_color_page(nid, color);
 			if (page)
 				goto out;
 		}
@@ -211,6 +279,8 @@ retry_color:
 		goto retry_node;
 	}
 out:
+	if (page)
+		SetPageColored(page);
 	return page;
 }
 EXPORT_SYMBOL(alloc_color_page);
@@ -224,13 +294,12 @@ void __init colormem_init()
 			INIT_LIST_HEAD(&color_area_arr[nid][color].free_list);
 			spin_lock_init(&color_area_arr[nid][color].lock);
 			color_area_arr[nid][color].nr_free = 0;
-			color_area_arr[nid][color].nr_allocation = 0;
+			color_area_arr[nid][color].nr_allocated = 0;
 		}
 	}
 
-	for_each_online_node(nid) {
-		refill_color_page(nid, NR_REFILL_COLOR_PAGE);
-	}
+	for_each_online_node(nid)
+		printk("NUMA %d - node_start_pfn: %ld\n", nid, NODE_DATA(nid)->node_start_pfn);
 }
 
 /* prevent >1 _updater_ of zone percpu pageset ->high and ->batch fields */
@@ -4888,9 +4957,8 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
 	gfp_t alloc_mask; /* The gfp_t that was actually used for allocation */
 	struct alloc_context ac = { };
 
-	if (order == 0 && nodemask != NULL
-	    && (gfp_mask & GFP_USER) && (gfp_mask & __GFP_HIGHMEM)
-	    && colormask_weight(&current->colors_allowed) > 0
+	if ((gfp_mask & GFP_HIGHUSER) == GFP_HIGHUSER
+	    && order == 0 && nodemask != NULL
 	    && colormask_weight(&current->colors_allowed) < NR_COLORS) {
 		/* assumption: one thread never trigger multiple page faults simultaneously */
 		page = alloc_color_page(nodemask, preferred_nid, &current->colors_allowed, current->preferred_color);
@@ -4898,6 +4966,8 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
 			int next_color = get_page_color(page) + 1;
 			current->preferred_color = next_color;
 			goto out;
+		} else {
+			printk("alloc_color_page: out of page, allocated from the normal routine\n");
 		}
 	}
 

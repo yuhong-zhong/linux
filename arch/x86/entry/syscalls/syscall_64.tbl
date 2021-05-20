@@ -359,6 +359,7 @@
 435	common	clone3			__x64_sys_clone3/ptregs
 436	common	set_color		__x64_sys_set_color
 437	common	get_color		__x64_sys_get_color
+438	common	reserve_color		__x64_sys_reserve_color
 
 #
 # x32-specific system call numbers start at 512 to avoid cache impact

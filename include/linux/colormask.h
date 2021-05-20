@@ -6,11 +6,13 @@
 #include <linux/bitmap.h>
 
 /* FIXME: update this info whenever try on new machine */
-#define DRAM_SIZE_PER_NODE (96l << 30)
-#define COLOR_SIZE (1l << 27)
-#define NR_COLORS ((DRAM_SIZE_PER_NODE + COLOR_SIZE - 1) / COLOR_SIZE)
+#define DRAM_SIZE_PER_NODE (96ul << 30)
+#define NR_COLORS 768u
 
-#define NR_REFILL_COLOR_PAGE (1l << 27)
+#define NR_COLOR_PAGE_MAX ((1ul << (29 - PAGE_SHIFT)) + (1ul << (26 - PAGE_SHIFT)))  /* safe guard */
+#define COLOR_ALLOC_MAX_ATTEMPT 16384
+
+#define COLOR_RESCHEDULE_COUNT 262144
 
 typedef struct colormask { DECLARE_BITMAP(bits, NR_COLORS); } colormask_t;
 
