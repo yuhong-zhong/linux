@@ -318,6 +318,7 @@ void ebpf_dump_page(uint8_t *page_image, uint64_t size) {
     }
     printk("==============================EBPF PAGE DUMP END==============================\n");
 }
+EXPORT_SYMBOL(ebpf_dump_page);
 
 u32 ebpf_lookup_kern(struct bpf_imposter_kern *context) {
     struct wt_ebpf_scratch *scratch = (struct wt_ebpf_scratch *)context->scratch;
@@ -359,3 +360,4 @@ u32 ebpf_lookup_kern(struct bpf_imposter_kern *context) {
     }
     return -1 * ret;
 }
+EXPORT_SYMBOL(ebpf_lookup_kern);

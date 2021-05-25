@@ -17,35 +17,22 @@
 
 #include "../../lib/kstrtox.h"
 
-#include <linux/uaccess.h>
-
-#define copy_from_kernel_nofault_loop(dst, src, len, type, err_label)	\
-	while (len >= sizeof(type)) {					\
-		__get_kernel_nofault(dst, src, type, err_label);		\
-		dst += sizeof(type);					\
-		src += sizeof(type);					\
-		len -= sizeof(type);					\
-	}
-
-BPF_CALL_3(bpf_imposter_read, void *, dst, u32, size,
-	   const void *, unsafe_ptr)
+BPF_CALL_5(bpf_imposter_read, void *, dst, s32, dst_offset,
+           const void *, unsafe_ptr, s32, src_offset, u32, size)
 {
-	copy_from_kernel_nofault_loop(dst, unsafe_ptr, size, u64, Efault);
-	copy_from_kernel_nofault_loop(dst, unsafe_ptr, size, u32, Efault);
-	copy_from_kernel_nofault_loop(dst, unsafe_ptr, size, u16, Efault);
-	copy_from_kernel_nofault_loop(dst, unsafe_ptr, size, u8, Efault);
+	memcpy(dst + dst_offset, unsafe_ptr + src_offset, size);
 	return 0;
-Efault:
-	return -EFAULT;
 }
 
 const struct bpf_func_proto bpf_imposter_read_proto = {
 	.func		= bpf_imposter_read,
 	.gpl_only	= true,
 	.ret_type	= RET_INTEGER,
-	.arg1_type	= ARG_PTR_TO_UNINIT_MEM,
-	.arg2_type	= ARG_CONST_SIZE_OR_ZERO,
+	.arg1_type	= ARG_ANYTHING,
+	.arg2_type	= ARG_ANYTHING,
 	.arg3_type	= ARG_ANYTHING,
+	.arg4_type	= ARG_ANYTHING,
+	.arg5_type	= ARG_ANYTHING,
 };
 
 /* If kernel subsystem is allowing eBPF programs to call this function,

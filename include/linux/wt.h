@@ -1,7 +1,7 @@
 #ifndef __LINUX_WT_H
 #define __LINUX_WT_H
 
-#define KERN_EBPF
+// #define KERN_EBPF
 
 #include <linux/compiler.h>
 #include <linux/types.h>
