@@ -4266,11 +4266,6 @@ struct bpf_pidns_info {
 
 struct bpf_storage {
 	char data[512];
-	char key[16];
-	__u64 key_size;
-	__s64 value;
-	int next_io;
-	char scratch[512];
 };
 
 #endif /* _UAPI__LINUX_BPF_H__ */
