@@ -614,60 +614,60 @@ ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
 	return ret;
 }
 
-extern struct bpf_prog __rcu *_imposter_prog;
-extern struct bpf_imposter_kern _imposter_g_context;
+extern struct bpf_prog __rcu *_bpf_prog;
+extern struct bpf_storage_kern _bpf_g_context;
 
 SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 {
 	struct fd f;
-	int _imposter_level;
+	int _bpf_level;
 	loff_t pos, *ppos;
 
-	/* check imposter info */
+	/* check bpf level info */
 	f = fdget_pos(fd);
 	if (!f.file) {
 		return -EBADF;
 	}
-	_imposter_level = f.file->_imposter_level;
+	_bpf_level = f.file->_bpf_level;
 	ppos = file_ppos(f.file);
 	if (ppos) {
 		pos = *ppos;
 	}
 	fdput_pos(f);
 
-	if (_imposter_level == 0) {
+	if (_bpf_level == 0) {
 		/* normal read */
 		return ksys_read(fd, buf, count);
 	} else {
-		/* imposter read */
+		/* bpf read with resubmission */
 		if (!ppos) {
-			printk("imposter read: invalid offset\n");
+			printk("bpf read: invalid offset\n");
 			return -EBADF;
 		}
 		long index = pos >> 12;
 		int i;
-		struct bpf_prog *ebpf_prog;
-		u32 ebpf_return;
-		for (i = 0; i < _imposter_level; ++i) {
+		struct bpf_prog *_local_bpf_prog;
+		u32 _bpf_return;
+		for (i = 0; i < _bpf_level; ++i) {
 			if (i > 0) {
 				rcu_read_lock();
-				ebpf_prog = rcu_dereference(_imposter_prog);
-				if (ebpf_prog) {
-					ebpf_return = BPF_PROG_RUN(ebpf_prog, &_imposter_g_context);
+				_local_bpf_prog = rcu_dereference(_bpf_prog);
+				if (_local_bpf_prog) {
+					_bpf_return = BPF_PROG_RUN(_local_bpf_prog, &_bpf_g_context);
 				}
 				rcu_read_unlock();
 			}
 			off_t lseek_ret = ksys_lseek(fd, index << 12, SEEK_SET);
 			if (lseek_ret != index << 12) {
-				printk("imposter read: ksys_lseek failed\n");
+				printk("bpf read: ksys_lseek failed\n");
 				return -EBADF;
 			}
 			ssize_t read_ret = ksys_read(fd, buf, count);
 			if (read_ret != count) {
-				printk("imposter read: ksys_read failed\n");
+				printk("bpf read: ksys_read failed\n");
 				return -EBADF;
 			}
-			index = (index * 1103515245 + 12345) % (1 << 23);
+			index = (index * 1103515245 + 12345) % (1 << 23);  /* randomly choose next offset */
 		}
 		return count;
 	}
