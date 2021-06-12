@@ -1424,7 +1424,6 @@ long compat_ksys_semtimedop(int semid, struct sembuf __user *tsems,
 			    unsigned int nsops,
 			    const struct old_timespec32 __user *timeout);
 
-asmlinkage long sys_imposter(int fd, int level);
-asmlinkage long sys_init_imposter(void);
+asmlinkage long sys_set_bpf_level(int fd, int level);
 
 #endif

@@ -866,18 +866,18 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	struct nvme_command cmnd, *cmndp;
 	blk_status_t ret;
 
-	if (req->bio && req->bio->_imposter_level > 0) {
+	if (req->bio && req->bio->_bpf_level > 0) {
 		cmndp = kmalloc(sizeof(struct nvme_command), GFP_NOWAIT);
 		if (!cmndp) {
 			printk("nvme_queue_rq: failed to allocate struct nvme_command\n");
 			cmndp = &cmnd;
-			req->_imposter_command = NULL;
+			req->_bpf_command = NULL;
 		} else {
-			req->_imposter_command = cmndp;
+			req->_bpf_command = cmndp;
 		}
 	} else {
 		cmndp = &cmnd;
-		req->_imposter_command = NULL;
+		req->_bpf_command = NULL;
 	}
 
 	iod->aborted = 0;
@@ -954,18 +954,16 @@ static inline struct blk_mq_tags *nvme_queue_tagset(struct nvme_queue *nvmeq)
 	return nvmeq->dev->tagset.tags[nvmeq->qid - 1];
 }
 
-extern struct bpf_prog __rcu *_imposter_prog;
-extern struct bpf_imposter_kern _imposter_g_context;
+extern struct bpf_prog __rcu *_bpf_prog;
+extern struct bpf_storage_kern _bpf_g_context;
 
 static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 {
 	struct nvme_completion *cqe = &nvmeq->cqes[idx];
 	struct request *req;
 	long _index;
-	struct bpf_prog *ebpf_prog;
-	u32 ebpf_return;
-	long _tmp;
-	int i;
+	struct bpf_prog *_local_bpf_prog;
+	u32 _bpf_return;
 
 	if (unlikely(cqe->command_id >= nvmeq->q_depth)) {
 		dev_warn(nvmeq->dev->ctrl.device,
@@ -989,24 +987,27 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq, u16 idx)
 	req = blk_mq_tag_to_rq(nvme_queue_tagset(nvmeq), cqe->command_id);
 	trace_nvme_sq(req, cqe->sq_head, nvmeq->sq_tail);
 
-	if (!req->bio || req->bio->_imposter_level == 0) {
+	if (!req->bio || req->bio->_bpf_level == 0) {
 		nvme_end_request(req, cqe->status, cqe->result);
 	} else {
-		++req->bio->_imposter_count;
-		if (req->bio->_imposter_count < req->bio->_imposter_level) {
+		++req->bio->_bpf_count;
+		if (req->bio->_bpf_count < req->bio->_bpf_level) {
+			/* resubmit another request */
 			rcu_read_lock();
-			ebpf_prog = rcu_dereference(_imposter_prog);
-			if (ebpf_prog) {
-				ebpf_return = BPF_PROG_RUN(ebpf_prog, &_imposter_g_context);
+			_local_bpf_prog = rcu_dereference(_bpf_prog);
+			if (_local_bpf_prog) {
+				/* run bpf program if present */
+				_bpf_return = BPF_PROG_RUN(_local_bpf_prog, &_bpf_g_context);
 			}
 			rcu_read_unlock();
 			_index = req->bio->bi_iter.bi_sector >> (12 - 9);
-			_index = (_index * 1103515245 + 12345) % (1 << 23);
+			_index = (_index * 1103515245 + 12345) % (1 << 23);  /* randomly choose the next offset */
 			req->bio->bi_iter.bi_sector = _index << (12 - 9);
-			req->__sector = req->bio->bi_iter.bi_sector + req->bio->_imposter_partition_start_sector;
-			req->_imposter_command->rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
-			nvme_submit_cmd(nvmeq, req->_imposter_command, true);
+			req->__sector = req->bio->bi_iter.bi_sector + req->bio->_bpf_partition_start_sector;
+			req->_bpf_command->rw.slba = cpu_to_le64(nvme_sect_to_lba(req->q->queuedata, blk_rq_pos(req)));
+			nvme_submit_cmd(nvmeq, req->_bpf_command, true);
 		} else {
+			/* complete this IO chain */
 			nvme_end_request(req, cqe->status, cqe->result);
 		}
 	}

@@ -950,7 +950,7 @@ struct file {
 	struct inode		*f_inode;	/* cached value */
 	const struct file_operations	*f_op;
 
-	int _imposter_level;
+	int _storage_level;
 
 	/*
 	 * Protects f_ep_links, f_flags.

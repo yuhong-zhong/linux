@@ -211,9 +211,9 @@ struct bio {
 
 	struct bio_set		*bi_pool;
 
-	int _imposter_level;
-	int _imposter_count;
-	u64 _imposter_partition_start_sector;
+	int _bpf_level;
+	int _bpf_count;
+	u64 _bpf_partition_start_sector;
 
 	/*
 	 * We can inline a number of vecs at the end of the bio, to avoid

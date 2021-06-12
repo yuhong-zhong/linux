@@ -189,7 +189,7 @@ enum bpf_prog_type {
 	BPF_PROG_TYPE_STRUCT_OPS,
 	BPF_PROG_TYPE_EXT,
 	BPF_PROG_TYPE_LSM,
-	BPF_PROG_TYPE_IMPOSTER,
+	BPF_PROG_TYPE_STORAGE,
 };
 
 enum bpf_attach_type {
@@ -227,7 +227,7 @@ enum bpf_attach_type {
 	BPF_CGROUP_INET4_GETSOCKNAME,
 	BPF_CGROUP_INET6_GETSOCKNAME,
 	BPF_XDP_DEVMAP,
-	BPF_IMPOSTER,
+	BPF_STORAGE,
 	__MAX_BPF_ATTACH_TYPE,
 };
 
@@ -4264,7 +4264,7 @@ struct bpf_pidns_info {
 	__u32 tgid;
 };
 
-struct bpf_imposter {
+struct bpf_storage {
 	char data[512];
 	char key[16];
 	__u64 key_size;

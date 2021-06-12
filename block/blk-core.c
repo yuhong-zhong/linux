@@ -907,8 +907,8 @@ static inline int blk_partition_remap(struct bio *bio)
 		if (bio_check_eod(bio, part_nr_sects_read(p)))
 			goto out;
 		bio->bi_iter.bi_sector += p->start_sect;
-		if (bio->_imposter_level > 0) {
-			bio->_imposter_partition_start_sector = p->start_sect;
+		if (bio->_bpf_level > 0) {
+			bio->_bpf_partition_start_sector = p->start_sect;
 		}
 		trace_block_bio_remap(bio->bi_disk->queue, bio, part_devt(p),
 				      bio->bi_iter.bi_sector - p->start_sect);
