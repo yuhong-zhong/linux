@@ -204,7 +204,6 @@ void rebalance_colormem(int nid, long nr_page)
 	struct page *page;
 	int color;
 	long nr_page_target, credit;
-	long reschedule_count = COLOR_RESCHEDULE_COUNT;
 
 	if (nr_page > NR_COLOR_PAGE_MAX) {
 		nr_page = NR_COLOR_PAGE_MAX;
@@ -234,10 +233,8 @@ void rebalance_colormem(int nid, long nr_page)
 			 */
 			atomic_insert_free_color_page(page);
 
-			if ((--reschedule_count) == 0) {
-				schedule();
-				reschedule_count = COLOR_RESCHEDULE_COUNT;
-			}
+			if (need_resched())
+				cond_resched();
 		}
 	}
 
@@ -251,6 +248,9 @@ void rebalance_colormem(int nid, long nr_page)
 	}
 }
 EXPORT_SYMBOL(rebalance_colormem);
+
+extern uint64_t pfn_arr[524288];
+extern atomic_t pfn_index;
 
 struct page *alloc_color_page(nodemask_t *nodemask, int preferred_nid,
                               colormask_t *colormask, int preferred_color)
@@ -284,6 +284,11 @@ retry_color:
 out:
 	if (page)
 		SetPageColored(page);
+	if (page) {
+		int index = atomic_fetch_inc(&pfn_index);
+		if (index >= 0 && index < 524288)
+			pfn_arr[index] = page_to_pfn(page);
+	}
 	return page;
 }
 EXPORT_SYMBOL(alloc_color_page);
@@ -5150,12 +5155,19 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
 	struct alloc_context ac = { };
 
 	if ((gfp_mask & GFP_HIGHUSER) == GFP_HIGHUSER
-	    && order == 0 && nodemask != NULL
+	    && order == 0
 	    && colormask_weight(&current->colors_allowed) < NR_COLORS) {
 		/* assumption: one thread never trigger multiple page faults simultaneously */
-		page = alloc_color_page(nodemask, preferred_nid, &current->colors_allowed, current->preferred_color);
+		page = alloc_color_page(nodemask ? nodemask : &node_states[N_MEMORY],
+		                        preferred_nid,
+					&current->colors_allowed,
+					current->preferred_color);
 		if (page) {
-			int next_color = get_page_color(page) + 1;
+			int next_color = colormask_next(get_page_color(page), &current->colors_allowed);
+			if (next_color == NR_COLORS)
+				next_color = colormask_first(&current->colors_allowed);
+			if (next_color == NR_COLORS)
+				next_color == 0;
 			current->preferred_color = next_color;
 			goto out;
 		} else {
