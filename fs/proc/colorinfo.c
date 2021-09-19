@@ -26,14 +26,18 @@ struct colorinfo_iter {
 
 static int colorinfo_show(struct seq_file *m, void *v)
 {
+	int chunk;
 	struct colorinfo_iter *iter = (struct colorinfo_iter *) v;
 	if (iter == NULL || iter->cur_entry < 0 || iter->cur_entry >= iter->nr_entry) {
-		printk("colorinfo_show: invalid iter\n");
+		printk("colorinfo_show: invalid iter %ld, iter->cur_entry %d, iter->nr_entry %d\n", iter,
+		       iter ? iter->cur_entry : 0, iter ? iter->nr_entry : 0);
 		return 0;
 	}
-	seq_printf(m, "numa[%d] - color[%d]:\tfree %lu, allocated %lu\n",
-		   iter->ci[iter->cur_entry].nid, iter->ci[iter->cur_entry].color,
-		   iter->ci[iter->cur_entry].total_free_pages, iter->ci[iter->cur_entry].total_allocated_pages);
+	for (chunk = 0; chunk < NR_PMEM_CHUNK; ++chunk) {
+		seq_printf(m, "numa[%d] - color[%d] (list %d):\tfree %lu, allocated %lu\n",
+		           iter->ci[iter->cur_entry].nid, iter->ci[iter->cur_entry].color, chunk,
+		           iter->ci[iter->cur_entry].total_free_pages[chunk], iter->ci[iter->cur_entry].total_allocated_pages[chunk]);
+	}
 	return 0;
 }
 
@@ -43,9 +47,14 @@ static void *colorinfo_start(struct seq_file *m, loff_t *pos)
 	struct colorinfo *ci;
 	struct colorinfo_iter *iter;
 
+	m->private = NULL;
 	nr_entry = get_colorinfo(&ci);
 	if (nr_entry <= 0) {
 		printk("colorinfo_start: get_colorinfo error, ret %d\n", nr_entry);
+		return NULL;
+	}
+	if ((*pos) >= nr_entry) {
+		kfree(ci);
 		return NULL;
 	}
 	iter = kmalloc(sizeof(struct colorinfo_iter), GFP_KERNEL);
@@ -75,7 +84,7 @@ static void *colorinfo_next(struct seq_file *m, void *v, loff_t *pos)
 static void colorinfo_stop(struct seq_file *m, void *v)
 {
 	struct colorinfo_iter *iter = (struct colorinfo_iter *) m->private;
-	if (!v) {
+	if (iter) {
 		kfree(iter->ci);
 		kfree(iter);
 	}

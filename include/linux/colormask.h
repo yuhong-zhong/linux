@@ -8,8 +8,9 @@
 /* FIXME: update this info whenever try on new machine */
 #define DRAM_SIZE_PER_NODE (96ul << 30)
 #define NR_COLORS 768u
+#define NR_PMEM_CHUNK 8
 
-#define NR_COLOR_PAGE_MAX ((1ul << (29 - PAGE_SHIFT)) + (1ul << (26 - PAGE_SHIFT)))  /* safe guard */
+#define NR_COLOR_PAGE_MAX ((1ul << (28 - PAGE_SHIFT)) * 3)  /* safe guard */
 #define COLOR_ALLOC_MAX_ATTEMPT 16384
 
 typedef struct colormask { DECLARE_BITMAP(bits, NR_COLORS); } colormask_t;
@@ -92,5 +93,12 @@ static inline unsigned int colormask_weight(const struct colormask *srcp)
 }
 
 int set_colors_allowed_ptr(struct task_struct *p, const struct colormask *new_mask);
+
+struct colorinfo {
+	__u32 nid;
+	__u32 color;
+	__kernel_ulong_t total_free_pages[NR_PMEM_CHUNK];
+	__kernel_ulong_t total_allocated_pages[NR_PMEM_CHUNK];
+};
 
 #endif

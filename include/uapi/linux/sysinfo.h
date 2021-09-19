@@ -22,11 +22,4 @@ struct sysinfo {
 	char _f[20-2*sizeof(__kernel_ulong_t)-sizeof(__u32)];	/* Padding: libc5 uses this.. */
 };
 
-struct colorinfo {
-	__u32 nid;
-	__u32 color;
-	__kernel_ulong_t total_free_pages;
-	__kernel_ulong_t total_allocated_pages;
-};
-
 #endif /* _LINUX_SYSINFO_H */

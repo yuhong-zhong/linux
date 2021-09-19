@@ -504,6 +504,7 @@ static inline int arch_make_page_accessible(struct page *page)
 
 int get_colorinfo(struct colorinfo **ci);
 int get_page_color(struct page *page);
+int get_page_chunk(struct page *page);
 struct page *alloc_color_page(nodemask_t *nodemask, int preferred_nid,
                               colormask_t *colormask, int preferred_color);
 void colormem_init(void);
