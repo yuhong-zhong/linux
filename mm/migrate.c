@@ -57,6 +57,9 @@
 
 #include "internal.h"
 
+atomic_long_t _get_new_page_time;
+atomic_long_t _page_copy_time;
+
 /*
  * migrate_prep() needs to be called before we start compiling a list of pages
  * to be migrated using isolate_lru_page(). If scheduling work on other CPUs is
@@ -675,10 +678,12 @@ EXPORT_SYMBOL(migrate_page_states);
 
 void migrate_page_copy(struct page *newpage, struct page *page)
 {
+	ktime_t start_time = ktime_get();
 	if (PageHuge(page) || PageTransHuge(page))
 		copy_huge_page(newpage, page);
 	else
 		copy_highpage(newpage, page);
+	atomic_long_add(ktime_sub(ktime_get(), start_time), &_page_copy_time);
 
 	migrate_page_states(newpage, page);
 }
@@ -1431,6 +1436,11 @@ int migrate_pages(struct list_head *from, new_page_t get_new_page,
 	int swapwrite = current->flags & PF_SWAPWRITE;
 	int rc, nr_subpages;
 
+	if (reason == MR_SYSCALL) {
+		atomic_long_set(&_get_new_page_time, 0);
+		atomic_long_set(&_page_copy_time, 0);
+	}
+
 	if (!swapwrite)
 		current->flags |= PF_SWAPWRITE;
 
@@ -1523,6 +1533,11 @@ retry:
 	nr_thp_failed += thp_retry;
 	rc = nr_failed;
 out:
+	if (reason == MR_SYSCALL) {
+		printk("get_new_page time: %ld ns\n", atomic_long_read(&_get_new_page_time));
+		printk("page copy time: %ld ns\n", atomic_long_read(&_page_copy_time));
+	}
+
 	count_vm_events(PGMIGRATE_SUCCESS, nr_succeeded);
 	count_vm_events(PGMIGRATE_FAIL, nr_failed);
 	count_vm_events(THP_MIGRATION_SUCCESS, nr_thp_succeeded);
@@ -1545,6 +1560,7 @@ struct page *alloc_migration_target(struct page *page, unsigned long private)
 	struct page *new_page = NULL;
 	int nid;
 	int zidx;
+	ktime_t start_time = ktime_get();
 
 	mtc = (struct migration_target_control *)private;
 	gfp_mask = mtc->gfp_mask;
@@ -1556,6 +1572,7 @@ struct page *alloc_migration_target(struct page *page, unsigned long private)
 		struct hstate *h = page_hstate(compound_head(page));
 
 		gfp_mask = htlb_modify_alloc_mask(h, gfp_mask);
+		atomic_long_add(ktime_sub(ktime_get(), start_time), &_get_new_page_time);
 		return alloc_huge_page_nodemask(h, nid, mtc->nmask, gfp_mask);
 	}
 
@@ -1577,6 +1594,7 @@ struct page *alloc_migration_target(struct page *page, unsigned long private)
 	if (new_page && PageTransHuge(new_page))
 		prep_transhuge_page(new_page);
 
+	atomic_long_add(ktime_sub(ktime_get(), start_time), &_get_new_page_time);
 	return new_page;
 }
 

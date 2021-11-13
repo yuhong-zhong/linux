@@ -78,6 +78,8 @@
 #include "shuffle.h"
 #include "page_reporting.h"
 
+#define GFP_COLOR ((GFP_HIGHUSER) & (~__GFP_RECLAIM))
+
 struct free_color_area {
 	struct list_head free_list[NR_PMEM_CHUNK];
 	unsigned long nr_free[NR_PMEM_CHUNK];
@@ -122,7 +124,7 @@ int get_page_color(struct page *page)
 {
 	int nid;
 	phys_addr_t addr, node_base_addr, dram_addr;
-	unsigned long dram_pfn;
+	unsigned long dram_index;
 	unsigned long tmp_1, tmp_2;
 
 	nid = page_to_nid(page);
@@ -131,10 +133,10 @@ int get_page_color(struct page *page)
 	if (node_base_addr == (1l << PAGE_SHIFT))
 		node_base_addr = 0;
 	dram_addr = (addr - node_base_addr) % DRAM_SIZE_PER_NODE;
-	dram_pfn = dram_addr >> PAGE_SHIFT;
+	dram_index = dram_addr >> COLOR_PAGE_SHIFT;
 
-	tmp_1 = dram_pfn % NR_COLORS;
-	tmp_2 = dram_pfn / NR_COLORS;
+	tmp_1 = dram_index % NR_COLORS;
+	tmp_2 = dram_index / NR_COLORS;
 
 	return (tmp_1 + tmp_2) % NR_COLORS;
 }
@@ -240,7 +242,7 @@ static bool atomic_release_free_color_page(int nid, int color)
 	spin_unlock(&color_area_arr[nid][color].lock);
 
 	if (page)
-		__free_page(page);
+		__free_pages(page, COLOR_PAGE_ORDER);
 	return page != NULL;
 }
 
@@ -263,7 +265,7 @@ void rebalance_colormem(int nid, long nr_page)
 		nr_page_target = nr_page - atomic_nr_free_color_page(nid, color);
 		credit = COLOR_ALLOC_MAX_ATTEMPT;
 		while (nr_page_target > 0 && credit > 0) {
-			page = __alloc_pages_nodemask(__GFP_HIGHMEM, 0, nid, &nodemask);
+			page = __alloc_pages_nodemask(__GFP_HIGHMEM, COLOR_PAGE_ORDER, nid, &nodemask);
 			if (!page)
 				break;
 			if (color == get_page_color(page)) {
@@ -1798,6 +1800,9 @@ void __meminit reserve_bootmem_region(phys_addr_t start, phys_addr_t end)
 	}
 }
 
+static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags,
+							unsigned int alloc_flags);
+
 static void __free_pages_ok(struct page *page, unsigned int order,
 			    fpi_t fpi_flags)
 {
@@ -1811,6 +1816,15 @@ static void __free_pages_ok(struct page *page, unsigned int order,
 	migratetype = get_pfnblock_migratetype(page, pfn);
 	local_irq_save(flags);
 	__count_vm_events(PGFREE, 1 << order);
+
+	if (PageColored(page)) {
+		trace_printk("__free_pages_ok: PageColored, order: %d, thp: %d\n", order, PageTransHuge(page));
+		ClearPageColored(page);
+		prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM, 0);
+		atomic_insert_free_color_page(page);
+		return;
+	}
+
 	free_one_page(page_zone(page), page, pfn, order, migratetype,
 		      fpi_flags);
 	local_irq_restore(flags);
@@ -3459,6 +3473,14 @@ static void free_unref_page_commit(struct page *page, unsigned long pfn)
 
 	migratetype = get_pcppage_migratetype(page);
 	__count_vm_event(PGFREE);
+
+	if (PageColored(page)) {
+		trace_printk("free_unref_page_commit: PageColored, order: 0, thp: 0\n");
+		ClearPageColored(page);
+		prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM, 0);
+		atomic_insert_free_color_page(page);
+		return;
+	}
 
 	/*
 	 * We only track unmovable, reclaimable and movable on pcp lists.
@@ -5211,8 +5233,8 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
 	gfp_t alloc_mask; /* The gfp_t that was actually used for allocation */
 	struct alloc_context ac = { };
 
-	if ((gfp_mask & GFP_HIGHUSER) == GFP_HIGHUSER
-	    && order == 0
+	if ((gfp_mask & GFP_COLOR) == GFP_COLOR
+	    && order == COLOR_PAGE_ORDER
 	    && colormask_weight(&current->colors_allowed) < NR_COLORS
 	    && colormask_weight(&current->colors_allowed) > 0) {
 		/* assumption: one thread never trigger multiple page faults simultaneously */
@@ -5227,9 +5249,10 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
 			if (next_color == NR_COLORS)
 				next_color = 0;
 			current->preferred_color = next_color;
+			trace_printk("alloc_color_page: page allocated, color: %d, order: %d\n", get_page_color(page), order);
 			goto out;
 		} else {
-			printk("alloc_color_page: out of page, allocated from the normal routine\n");
+			trace_printk("alloc_color_page: out of page, allocated from the normal routine\n");
 		}
 	}
 

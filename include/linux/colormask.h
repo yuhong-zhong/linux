@@ -5,12 +5,22 @@
 #include <linux/threads.h>
 #include <linux/bitmap.h>
 
+#define COLOR_THP
+
 /* FIXME: update this info whenever try on new machine */
 #define DRAM_SIZE_PER_NODE (96ul << 30)
 #define NR_COLORS 768u
 #define NR_PMEM_CHUNK 8
 
-#define NR_COLOR_PAGE_MAX ((1ul << (28 - PAGE_SHIFT)) * 3)  /* safe guard */
+#ifdef COLOR_THP
+#define COLOR_PAGE_SHIFT HPAGE_PMD_SHIFT
+#else
+#define COLOR_PAGE_SHIFT PAGE_SHIFT
+#endif
+#define COLOR_PAGE_SIZE (1UL << COLOR_PAGE_SHIFT)
+#define COLOR_PAGE_ORDER (COLOR_PAGE_SHIFT - PAGE_SHIFT)
+
+#define NR_COLOR_PAGE_MAX ((1ul << (28 - COLOR_PAGE_SHIFT)) * 3)  /* safe guard */
 #define COLOR_ALLOC_MAX_ATTEMPT 16384
 
 typedef struct colormask { DECLARE_BITMAP(bits, NR_COLORS); } colormask_t;

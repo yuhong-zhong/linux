@@ -1074,6 +1074,7 @@ static int migrate_to_node(struct mm_struct *mm, int source, int dest,
 	nodemask_t nmask;
 	LIST_HEAD(pagelist);
 	int err = 0;
+	ktime_t queue_start, migrate_start;
 	struct migration_target_control mtc = {
 		.nid = dest,
 		.gfp_mask = GFP_HIGHUSER_MOVABLE | __GFP_THISNODE,
@@ -1088,12 +1089,16 @@ static int migrate_to_node(struct mm_struct *mm, int source, int dest,
 	 * space range and MPOL_MF_DISCONTIG_OK, this call can not fail.
 	 */
 	VM_BUG_ON(!(flags & (MPOL_MF_MOVE | MPOL_MF_MOVE_ALL)));
+	queue_start = ktime_get();
 	queue_pages_range(mm, mm->mmap->vm_start, mm->task_size, &nmask,
 			flags | MPOL_MF_DISCONTIG_OK, &pagelist);
+	printk("queue_pages_range: %ld ns\n", ktime_sub(ktime_get(), queue_start));
 
 	if (!list_empty(&pagelist)) {
+		migrate_start = ktime_get();
 		err = migrate_pages(&pagelist, alloc_migration_target, NULL,
 				(unsigned long)&mtc, MIGRATE_SYNC, MR_SYSCALL);
+		printk("migrate_start: %ld ns\n", ktime_sub(ktime_get(), migrate_start));
 		if (err)
 			putback_movable_pages(&pagelist);
 	}
