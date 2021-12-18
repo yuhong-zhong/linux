@@ -62,5 +62,9 @@ enum {
 #define MPOL_F_MOF	(1 << 3) /* this policy wants migrate on fault */
 #define MPOL_F_MORON	(1 << 4) /* Migrate On protnone Reference On Node */
 
+#define MP_MEMCPY	(1 << 0)  /* use memcpy to migrate pages */
+#define MP_DMA		(1 << 1)  /* use DMA to migrate pages */
+#define MP_MULTI_CHANNELS (1 << 2)  /* use 8 channels to migrate pages */
+#define MP_BATCH	(1 << 3)  /* migrate pages in batch of 8 pages */
 
 #endif /* _UAPI_LINUX_MEMPOLICY_H */

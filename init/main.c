@@ -98,6 +98,7 @@
 #include <linux/mem_encrypt.h>
 #include <linux/kcsan.h>
 #include <linux/init_syscalls.h>
+#include <linux/colormask.h>
 
 #include <asm/io.h>
 #include <asm/bugs.h>
@@ -1503,6 +1504,12 @@ static noinline void __init kernel_init_freeable(void)
 	 * init can allocate pages on any node
 	 */
 	set_mems_allowed(node_states[N_MEMORY]);
+
+	/* initialize root color config */
+	set_colors_allowed_ptr(current, color_all_mask);
+	current->preferred_color = 0;
+	/* initialize color mem pool */
+	colormem_init();
 
 	cad_pid = task_pid(current);
 

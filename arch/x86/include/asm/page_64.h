@@ -56,6 +56,8 @@ static inline void clear_page(void *page)
 
 void copy_page(void *to, void *from);
 
+void access_page(void *page);
+
 #endif	/* !__ASSEMBLY__ */
 
 #ifdef CONFIG_X86_VSYSCALL_EMULATION

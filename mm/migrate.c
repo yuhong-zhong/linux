@@ -57,6 +57,9 @@
 
 #include "internal.h"
 
+atomic_long_t _get_new_page_time;
+atomic_long_t _page_copy_time;
+
 /*
  * migrate_prep() needs to be called before we start compiling a list of pages
  * to be migrated using isolate_lru_page(). If scheduling work on other CPUs is
@@ -675,10 +678,12 @@ EXPORT_SYMBOL(migrate_page_states);
 
 void migrate_page_copy(struct page *newpage, struct page *page)
 {
+	ktime_t start_time = ktime_get();
 	if (PageHuge(page) || PageTransHuge(page))
 		copy_huge_page(newpage, page);
 	else
 		copy_highpage(newpage, page);
+	atomic_long_add(ktime_sub(ktime_get(), start_time), &_page_copy_time);
 
 	migrate_page_states(newpage, page);
 }
@@ -1431,6 +1436,11 @@ int migrate_pages(struct list_head *from, new_page_t get_new_page,
 	int swapwrite = current->flags & PF_SWAPWRITE;
 	int rc, nr_subpages;
 
+	if (reason == MR_SYSCALL) {
+		atomic_long_set(&_get_new_page_time, 0);
+		atomic_long_set(&_page_copy_time, 0);
+	}
+
 	if (!swapwrite)
 		current->flags |= PF_SWAPWRITE;
 
@@ -1523,6 +1533,11 @@ retry:
 	nr_thp_failed += thp_retry;
 	rc = nr_failed;
 out:
+	if (reason == MR_SYSCALL) {
+		printk("get_new_page time: %ld ns\n", atomic_long_read(&_get_new_page_time));
+		printk("page copy time: %ld ns\n", atomic_long_read(&_page_copy_time));
+	}
+
 	count_vm_events(PGMIGRATE_SUCCESS, nr_succeeded);
 	count_vm_events(PGMIGRATE_FAIL, nr_failed);
 	count_vm_events(THP_MIGRATION_SUCCESS, nr_thp_succeeded);
@@ -1537,6 +1552,12 @@ out:
 	return rc;
 }
 
+// int migrate_pages_dma(struct list_head *l, new_page_t new, free_page_t free,
+// 	unsigned long private, enum migrate_mode mode,
+// 	int reason, int syscall_mode)
+// {
+// }
+
 struct page *alloc_migration_target(struct page *page, unsigned long private)
 {
 	struct migration_target_control *mtc;
@@ -1545,6 +1566,7 @@ struct page *alloc_migration_target(struct page *page, unsigned long private)
 	struct page *new_page = NULL;
 	int nid;
 	int zidx;
+	ktime_t start_time = ktime_get();
 
 	mtc = (struct migration_target_control *)private;
 	gfp_mask = mtc->gfp_mask;
@@ -1556,6 +1578,7 @@ struct page *alloc_migration_target(struct page *page, unsigned long private)
 		struct hstate *h = page_hstate(compound_head(page));
 
 		gfp_mask = htlb_modify_alloc_mask(h, gfp_mask);
+		atomic_long_add(ktime_sub(ktime_get(), start_time), &_get_new_page_time);
 		return alloc_huge_page_nodemask(h, nid, mtc->nmask, gfp_mask);
 	}
 
@@ -1577,7 +1600,172 @@ struct page *alloc_migration_target(struct page *page, unsigned long private)
 	if (new_page && PageTransHuge(new_page))
 		prep_transhuge_page(new_page);
 
+	atomic_long_add(ktime_sub(ktime_get(), start_time), &_get_new_page_time);
 	return new_page;
+}
+
+int access_pages(struct list_head *from_page_list, int nid, struct colormask *color_mask, int mode)
+{
+	// TODO: support THP
+	struct list_head *pos;
+	struct page *cur_page;
+	int page_color;
+	ktime_t start;
+
+	start = ktime_get();
+
+	list_for_each(pos, from_page_list) {
+		cur_page = list_entry(pos, struct page, lru);
+		page_color = get_page_color(cur_page);
+		if (!color_isset(page_color, *color_mask))
+			continue;
+		access_page(page_address(cur_page));
+		cond_resched();
+	}
+
+	printk("access_pages: finished, %lld ns\n", ktime_sub(ktime_get(), start));
+	return 0;
+}
+
+int access_pages_dma(struct list_head *from_page_list, int nid, struct colormask *color_mask, int mode)
+{
+	// TODO: support THP
+	dma_cap_mask_t mask;
+	size_t num_channels, batch_size;
+	struct dma_chan *chan_arr[COLOR_NUM_CHANNELS];
+	struct page *cur_page, *garbage_page;
+	int page_color;
+	uint64_t num_inflight_pages;
+	dma_cookie_t cookie_arr[COLOR_BATCH_SIZE * COLOR_NUM_CHANNELS];
+	dma_cookie_t last, used;
+	bool has_req_sent;
+	enum dma_status status;
+	ktime_t start;
+	struct list_head used_page_list;
+	struct list_head *pos, *n;
+	size_t i, j;
+	int ret = 0;
+
+	if (mode & MP_MULTI_CHANNELS) {
+		num_channels = COLOR_NUM_CHANNELS;
+	} else {
+		num_channels = 1;
+	}
+	if (mode & MP_BATCH) {
+		batch_size = COLOR_BATCH_SIZE;
+	} else {
+		batch_size = 1;
+	}
+
+	// Allocate DMA channel
+	dma_cap_zero(mask);
+	dma_cap_set(DMA_MEMCPY, mask);
+	for (i = 0; i < num_channels; ++i) {
+		chan_arr[i] = NULL;
+	}
+	for (i = 0; i < num_channels; ++i) {
+		chan_arr[i] = dma_request_channel(mask, NULL, NULL);
+		if (chan_arr[i] == NULL) {
+			printk("access_pages_dma: failed to request channel\n");
+			ret = -EINVAL;
+			goto free_chan;
+		}
+	}
+
+	// Initialize variables
+	INIT_LIST_HEAD(&used_page_list);
+	num_inflight_pages = 0;
+
+	// Allocate garbage
+	garbage_page = __alloc_pages_node(nid, GFP_KERNEL, 0 /* TODO: HUGE PAGE SUPPORT */);
+	if (garbage_page == NULL) {
+		printk("access_pages_dma: failed to allocate garbage page\n");
+		ret = -ENOMEM;
+		goto free_chan;
+	}
+
+	start = ktime_get();
+
+	// Send the first batch of request
+	for (j = 0; j < num_channels; ++j) {
+		has_req_sent = false;
+		for (i = 0; i < batch_size; ++i) {
+			if (list_empty(from_page_list)) {
+				cookie_arr[i + j * batch_size] = 0;
+				continue;
+			}
+			cur_page = list_first_entry(from_page_list, struct page, lru);
+			list_del(&cur_page->lru);
+			list_add(&cur_page->lru, used_page_list);
+			page_color = get_page_color(cur_page);
+			if (!color_isset(page_color, *color_mask)) {
+				cookie_arr[i + j * batch_size] = 0;
+				continue;
+			}
+			cookie_arr[i + j * batch_size] = queue_req(chan_arr[j], cur_page, garbage_page);
+			++num_inflight_pages;
+			has_req_sent = true;
+		}
+		if (has_req_sent)
+			dma_async_issue_pending(chan_arr[j]);
+	}
+
+	while (num_inflight_pages > 0 || !list_empty(from_page_list)) {
+		for (j = 0; j < num_channels; ++j) {
+			has_req_sent = false;
+			dma_async_is_tx_complete(chan_arr[j], cookie_arr[j * batch_size], &last, &used);
+			for (i = 0; i < batch_size; ++i) {
+				if (cookie_arr[i + j * batch_size] == 0)
+					continue;
+				status = dma_async_is_complete(cookie_arr[i + j * batch_size], last, used);
+				if (status == DMA_COMPLETE) {
+					--num_inflight_pages;
+					cur_page = NULL;
+					while (!list_empty(from_page_list)) {
+						cur_page = list_first_entry(from_page_list, struct page, lru);
+						list_del(&cur_page->lru);
+						list_add(&cur_page->lru, used_page_list);
+						page_color = get_page_color(cur_page);
+						if (color_isset(page_color, *color_mask)) {
+							break;
+						}
+						cur_page = NULL;
+					}
+					if (cur_page) {
+						cookie_arr[i + j * batch_size] = queue_req(chan_arr[j], cur_page, garbage_page);
+						has_req_sent = true;
+						++num_inflight_pages;
+					} else {
+						cookie_arr[i + j * batch_size] = 0;
+					}
+				}
+			}
+			if (has_req_sent) {
+				dma_async_issue_pending(chan_arr[j]);
+			}
+			// TODO: add cpu_relax() here ?
+		}
+		cond_resched();
+	}
+
+	printk("access_pages_dma: finished, %lld ns\n", ktime_sub(ktime_get(), start));
+
+	// Free garbage page
+	__free_pages(garbage_page, 0);
+
+	// Requeue pages
+	list_for_each_safe(pos, n, &used_page_list) {
+		cur_page = list_entry(pos, struct page, lru);
+		list_del(&cur_page->lru);
+		list_add(&cur_page->lru, from_page_list);
+	}
+free_chan:
+	for (i = 0; i < num_channels; ++i) {
+		if (chan_arr[i] != NULL) {
+			dma_release_channel(chan_arr[i]);
+		}
+	}
+	return ret;
 }
 
 #ifdef CONFIG_NUMA

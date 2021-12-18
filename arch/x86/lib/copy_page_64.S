@@ -21,6 +21,15 @@ SYM_FUNC_START(copy_page)
 SYM_FUNC_END(copy_page)
 EXPORT_SYMBOL(copy_page)
 
+SYM_FUNC_START(access_page)
+	ALTERNATIVE "jmp access_page_regs", "", X86_FEATURE_REP_GOOD
+	movq	%rdi, %rsi
+	movl	$4096/8, %ecx
+	rep	lodsq
+	ret
+SYM_FUNC_END(access_page)
+EXPORT_SYMBOL(access_page)
+
 SYM_FUNC_START_LOCAL(copy_page_regs)
 	subq	$2*8,	%rsp
 	movq	%rbx,	(%rsp)
@@ -87,3 +96,51 @@ SYM_FUNC_START_LOCAL(copy_page_regs)
 	addq	$2*8, %rsp
 	ret
 SYM_FUNC_END(copy_page_regs)
+
+SYM_FUNC_START_LOCAL(access_page_regs)
+	movq	%rdi,	%rsi
+	subq	$2*8,	%rsp
+	movq	%rbx,	(%rsp)
+	movq	%r12,	1*8(%rsp)
+
+	movl	$(4096/64)-5,	%ecx
+	.p2align 4
+.Loop64A:
+	dec	%rcx
+	movq	0x8*0(%rsi), %rax
+	movq	0x8*1(%rsi), %rbx
+	movq	0x8*2(%rsi), %rdx
+	movq	0x8*3(%rsi), %r8
+	movq	0x8*4(%rsi), %r9
+	movq	0x8*5(%rsi), %r10
+	movq	0x8*6(%rsi), %r11
+	movq	0x8*7(%rsi), %r12
+
+	prefetcht0 5*64(%rsi)
+
+	leaq	64 (%rsi), %rsi
+
+	jnz	.Loop64A
+
+	movl	$5, %ecx
+	.p2align 4
+.Loop2A:
+	decl	%ecx
+
+	movq	0x8*0(%rsi), %rax
+	movq	0x8*1(%rsi), %rbx
+	movq	0x8*2(%rsi), %rdx
+	movq	0x8*3(%rsi), %r8
+	movq	0x8*4(%rsi), %r9
+	movq	0x8*5(%rsi), %r10
+	movq	0x8*6(%rsi), %r11
+	movq	0x8*7(%rsi), %r12
+
+	leaq	64(%rsi), %rsi
+	jnz	.Loop2A
+
+	movq	(%rsp), %rbx
+	movq	1*8(%rsp), %r12
+	addq	$2*8, %rsp
+	ret
+SYM_FUNC_END(access_page_regs)
