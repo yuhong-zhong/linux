@@ -29,7 +29,7 @@ static int colorinfo_show(struct seq_file *m, void *v)
 	int chunk;
 	struct colorinfo_iter *iter = (struct colorinfo_iter *) v;
 	if (iter == NULL || iter->cur_entry < 0 || iter->cur_entry >= iter->nr_entry) {
-		printk("colorinfo_show: invalid iter %ld, iter->cur_entry %d, iter->nr_entry %d\n", iter,
+		printk("colorinfo_show: invalid iter %lld, iter->cur_entry %d, iter->nr_entry %d\n", (long long int) iter,
 		       iter ? iter->cur_entry : 0, iter ? iter->nr_entry : 0);
 		return 0;
 	}
@@ -119,7 +119,7 @@ atomic_t pfn_index;
 static int pfn_show(struct seq_file *m, void *v)
 {
 	uint64_t *pfn_ptr = (uint64_t *) v;
-	seq_printf(m, "%ld\n", *pfn_ptr);
+	seq_printf(m, "%lld\n", *pfn_ptr);
 	return 0;
 }
 

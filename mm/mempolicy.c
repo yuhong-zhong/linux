@@ -1092,13 +1092,13 @@ static int migrate_to_node(struct mm_struct *mm, int source, int dest,
 	queue_start = ktime_get();
 	queue_pages_range(mm, mm->mmap->vm_start, mm->task_size, &nmask,
 			flags | MPOL_MF_DISCONTIG_OK, &pagelist);
-	printk("queue_pages_range: %ld ns\n", ktime_sub(ktime_get(), queue_start));
+	printk("queue_pages_range: %lld ns\n", ktime_sub(ktime_get(), queue_start));
 
 	if (!list_empty(&pagelist)) {
 		migrate_start = ktime_get();
 		err = migrate_pages(&pagelist, alloc_migration_target, NULL,
 				(unsigned long)&mtc, MIGRATE_SYNC, MR_SYSCALL);
-		printk("migrate_pages: %ld ns\n", ktime_sub(ktime_get(), migrate_start));
+		printk("migrate_pages: %lld ns\n", ktime_sub(ktime_get(), migrate_start));
 		if (err)
 			putback_movable_pages(&pagelist);
 	}
@@ -1130,22 +1130,22 @@ static int migrate_to_node2(struct mm_struct *mm, int source, int dest,
 	queue_start = ktime_get();
 	queue_pages_range(mm, mm->mmap->vm_start, mm->task_size, &nmask,
 			flags | MPOL_MF_DISCONTIG_OK, &pagelist);
-	printk("queue_pages_range: %ld ns\n", ktime_sub(ktime_get(), queue_start));
+	printk("queue_pages_range: %lld ns\n", ktime_sub(ktime_get(), queue_start));
 
 	if (!list_empty(&pagelist)) {
 		migrate_start = ktime_get();
-		if (mod & MP_MEMCPY) {
+		if (mode & MP_MEMCPY) {
 			err = migrate_pages(&pagelist, alloc_migration_target, NULL,
 			                    (unsigned long)&mtc, MIGRATE_SYNC, MR_SYSCALL);
-			printk("migrate_pages: %ld ns\n", ktime_sub(ktime_get(), migrate_start));
+			printk("migrate_pages: %lld ns\n", ktime_sub(ktime_get(), migrate_start));
 			if (err)
 				putback_movable_pages(&pagelist);
-		// } else if (mode & MP_DMA) {
-		// 	err = migrate_pages_dma(&pagelist, alloc_migration_target, NULL,
-		// 	                        (unsigned long)&mtc, MIGRATE_SYNC, MR_SYSCALL);
-		// 	printk("migrate_pages_dma: %ld ns\n", ktime_sub(ktime_get(), migrate_start));
-		// 	if (err)
-		// 		putback_movable_pages(&pagelist);
+		} else if (mode & MP_DMA) {
+			err = migrate_pages_dma(&pagelist, alloc_migration_target, NULL,
+			                        (unsigned long)&mtc, MIGRATE_SYNC, MR_SYSCALL, mode);
+			printk("migrate_pages_dma: %lld ns\n", ktime_sub(ktime_get(), migrate_start));
+			if (err)
+				putback_movable_pages(&pagelist);
 		} else {
 			printk("migrate_to_node2: Unknown mode %d\n", mode);
 			err = -EINVAL;
@@ -1169,18 +1169,16 @@ static int access_mm(struct mm_struct *mm, int nid, struct colormask *color_mask
 	queue_start = ktime_get();
 	queue_pages_range(mm, mm->mmap->vm_start, mm->task_size, &nmask,
 			  MPOL_MF_MOVE_ALL | MPOL_MF_DISCONTIG_OK, &pagelist);
-	printk("queue_pages_range: %ld ns\n", ktime_sub(ktime_get(), queue_start));
+	printk("queue_pages_range: %lld ns\n", ktime_sub(ktime_get(), queue_start));
 
 	if (!list_empty(&pagelist)) {
 		migrate_start = ktime_get();
 		if (mode & MP_MEMCPY) {
 			err = access_pages(&pagelist, nid, color_mask, mode);
-			printk("access_pages: %ld ns\n", ktime_sub(ktime_get(), migrate_start));
-			break;
+			printk("access_pages: %lld ns\n", ktime_sub(ktime_get(), migrate_start));
 		} else if (mode & MP_DMA) {
 			err = access_pages_dma(&pagelist, nid, color_mask, mode);
-			printk("access_pages_dma: %ld ns\n", ktime_sub(ktime_get(), migrate_start));
-			break;
+			printk("access_pages_dma: %lld ns\n", ktime_sub(ktime_get(), migrate_start));
 		} else {
 			printk("access_mm: Unknown mode %d\n", mode);
 			err = -EINVAL;
@@ -1880,7 +1878,7 @@ out_put:
 SYSCALL_DEFINE5(migrate_pages2, pid_t, pid, unsigned long, maxnode,
 		const unsigned long __user *, old_nodes,
 		const unsigned long __user *, new_nodes,
-		int mode)
+		int, mode)
 {
 	return kernel_migrate_pages2(pid, maxnode, old_nodes, new_nodes, mode);
 }
@@ -1948,7 +1946,7 @@ out_put:
 
 }
 
-SYSCALL_DEFINE4(access_pages2, pid_t, pid, int, nid,
+SYSCALL_DEFINE5(access_pages2, pid_t, pid, int, nid,
 	unsigned int, len, unsigned long __user *, user_mask_ptr,
 	int, mode)
 {

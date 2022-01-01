@@ -5,7 +5,7 @@
 #include <linux/threads.h>
 #include <linux/bitmap.h>
 
-#define COLOR_THP
+// #define COLOR_THP
 
 /* FIXME: update this info whenever try on new machine */
 #define DRAM_SIZE_PER_NODE (96ul << 30)
@@ -23,7 +23,6 @@
 #define NR_COLOR_PAGE_MAX ((1ul << (28 - COLOR_PAGE_SHIFT)) * 3)  /* safe guard */
 #define COLOR_ALLOC_MAX_ATTEMPT 16384
 
-#define COLOR_BATCH_SIZE 8
 #define COLOR_NUM_CHANNELS 8
 
 typedef struct colormask { DECLARE_BITMAP(bits, NR_COLORS); } colormask_t;
