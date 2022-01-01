@@ -2197,6 +2197,7 @@ int access_pages_dma(struct list_head *from_page_list, int nid, struct colormask
 	size_t num_channels, batch_size;
 	struct dma_chan *chan_arr[COLOR_NUM_CHANNELS];
 	struct page *cur_page, *garbage_page;
+	struct page *page, *page2;
 	int page_color;
 	uint64_t num_inflight_pages;
 	dma_cookie_t *cookie_arr;
@@ -2204,8 +2205,6 @@ int access_pages_dma(struct list_head *from_page_list, int nid, struct colormask
 	bool has_req_sent, need_relax;
 	enum dma_status status;
 	ktime_t start;
-	struct list_head used_page_list;
-	struct list_head *pos, *n;
 	size_t i, j;
 	uint64_t num_pages_copied;
 	int ret = 0;
@@ -2244,7 +2243,6 @@ int access_pages_dma(struct list_head *from_page_list, int nid, struct colormask
 	}
 
 	// Initialize variables
-	INIT_LIST_HEAD(&used_page_list);
 	num_inflight_pages = 0;
 	num_pages_copied = 0;
 
@@ -2258,20 +2256,20 @@ int access_pages_dma(struct list_head *from_page_list, int nid, struct colormask
 
 	start = ktime_get();
 
+	page = list_first_entry(from_page_list, struct page, lru);
+	page2 = list_next_entry(page, lru);
+
 	// Send the first batch of request
 	for (j = 0; j < num_channels; ++j) {
 		has_req_sent = false;
 		for (i = 0; i < batch_size; ++i) {
 			cur_page = NULL;
-			while (!list_empty(from_page_list)) {
-				cur_page = list_first_entry(from_page_list, struct page, lru);
-				list_del(&cur_page->lru);
-				list_add(&cur_page->lru, &used_page_list);
-				page_color = get_page_color(cur_page);
-				if (color_isset(page_color, *color_mask) && !PageHuge(cur_page)) {
-					break;
-				}
-				cur_page = NULL;
+			while (cur_page == NULL && !list_entry_is_head(page, from_page_list, lru)) {
+				page_color = get_page_color(page);
+				if (color_isset(page_color, *color_mask) && !PageHuge(page))
+					cur_page = page;
+				page = page2;
+				page2 = list_next_entry(page2, lru);
 			}
 			if (cur_page != NULL) {
 				cookie_arr[i + j * batch_size] = queue_dma_req(chan_arr[j], cur_page, garbage_page);
@@ -2285,7 +2283,7 @@ int access_pages_dma(struct list_head *from_page_list, int nid, struct colormask
 			dma_async_issue_pending(chan_arr[j]);
 	}
 
-	while (num_inflight_pages > 0 || !list_empty(from_page_list)) {
+	while (num_inflight_pages > 0 || !list_entry_is_head(page, from_page_list, lru)) {
 		need_relax = true;
 		for (j = 0; j < num_channels; ++j) {
 			has_req_sent = false;
@@ -2297,18 +2295,16 @@ int access_pages_dma(struct list_head *from_page_list, int nid, struct colormask
 				if (status == DMA_COMPLETE) {
 					++num_pages_copied;
 					--num_inflight_pages;
+
 					cur_page = NULL;
-					while (!list_empty(from_page_list)) {
-						cur_page = list_first_entry(from_page_list, struct page, lru);
-						list_del(&cur_page->lru);
-						list_add(&cur_page->lru, &used_page_list);
-						page_color = get_page_color(cur_page);
-						if (color_isset(page_color, *color_mask) && !PageHuge(cur_page)) {
-							break;
-						}
-						cur_page = NULL;
+					while (cur_page == NULL && !list_entry_is_head(page, from_page_list, lru)) {
+						page_color = get_page_color(page);
+						if (color_isset(page_color, *color_mask) && !PageHuge(page))
+							cur_page = page;
+						page = page2;
+						page2 = list_next_entry(page2, lru);
 					}
-					if (cur_page) {
+					if (cur_page != NULL) {
 						cookie_arr[i + j * batch_size] = queue_dma_req(chan_arr[j], cur_page, garbage_page);
 						has_req_sent = true;
 						need_relax = false;
@@ -2330,12 +2326,6 @@ int access_pages_dma(struct list_head *from_page_list, int nid, struct colormask
 	printk("access_pages_dma loop: %lld ns\n", ktime_sub(ktime_get(), start));
 	printk("access_pages_dma #pages: %lld\n", num_pages_copied);
 
-	// Requeue pages
-	list_for_each_safe(pos, n, &used_page_list) {
-		cur_page = list_entry(pos, struct page, lru);
-		list_del(&cur_page->lru);
-		list_add(&cur_page->lru, from_page_list);
-	}
 	__free_pages(garbage_page, HPAGE_PMD_ORDER);
 free_chan:
 	for (i = 0; i < num_channels; ++i) {
