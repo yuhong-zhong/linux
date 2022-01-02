@@ -43,6 +43,8 @@ extern int migrate_pages(struct list_head *l, new_page_t new, free_page_t free,
 		unsigned long private, enum migrate_mode mode, int reason);
 extern int migrate_pages_dma(struct list_head *l, new_page_t new, free_page_t free,
 		unsigned long private, enum migrate_mode mode, int reason, int syscall_mode);
+extern int migrate_pages_memcpy(struct list_head *l, new_page_t new, free_page_t free,
+		unsigned long private, enum migrate_mode mode, int reason, int syscall_mode);
 extern int access_pages(struct list_head *l, int nid, struct colormask *mask, int mode);
 extern int access_pages_dma(struct list_head *l, int nid, struct colormask *mask, int mode);
 

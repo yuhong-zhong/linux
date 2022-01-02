@@ -1136,13 +1136,13 @@ static int migrate_to_node2(struct mm_struct *mm, int source, int dest,
 		migrate_start = ktime_get();
 		if (mode & MP_MEMCPY) {
 			err = migrate_pages(&pagelist, alloc_migration_target, NULL,
-			                    (unsigned long)&mtc, MIGRATE_SYNC, MR_SYSCALL);
+					(unsigned long)&mtc, MIGRATE_SYNC, MR_SYSCALL);
 			printk("migrate_pages: %lld ns\n", ktime_sub(ktime_get(), migrate_start));
 			if (err)
 				putback_movable_pages(&pagelist);
 		} else if (mode & MP_DMA) {
 			err = migrate_pages_dma(&pagelist, alloc_migration_target, NULL,
-			                        (unsigned long)&mtc, MIGRATE_SYNC, MR_SYSCALL, mode);
+					(unsigned long)&mtc, MIGRATE_SYNC, MR_SYSCALL, mode);
 			printk("migrate_pages_dma: %lld ns\n", ktime_sub(ktime_get(), migrate_start));
 			if (err)
 				putback_movable_pages(&pagelist);
