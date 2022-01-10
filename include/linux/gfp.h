@@ -646,4 +646,10 @@ void free_contig_range(unsigned long pfn, unsigned int nr_pages);
 extern void init_cma_reserved_pageblock(struct page *page);
 #endif
 
+void atomic_insert_free_color_page(struct page *page);
+struct page *atomic_get_free_color_page(int nid, int color);
+struct page *alloc_color_page(nodemask_t *nodemask, int preferred_nid,
+                              colormask_t *colormask, int preferred_color);
+void atomic_reset_preferred_list(int nid, int color, bool lock);
+
 #endif /* __LINUX_GFP_H */

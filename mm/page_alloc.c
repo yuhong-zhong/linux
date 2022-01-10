@@ -168,7 +168,7 @@ static long atomic_nr_free_color_page(int nid, int color)
 	return nr_free_page;
 }
 
-static void atomic_reset_preferred_list(int nid, int color, bool lock)
+void atomic_reset_preferred_list(int nid, int color, bool lock)
 {
 	int chunk, i;
 
@@ -182,8 +182,9 @@ static void atomic_reset_preferred_list(int nid, int color, bool lock)
 	if (lock)
 		spin_unlock(&color_area_arr[nid][color].lock);
 }
+EXPORT_SYMBOL(atomic_reset_preferred_list);
 
-static struct page *atomic_get_free_color_page(int nid, int color)
+struct page *atomic_get_free_color_page(int nid, int color)
 {
 	int chunk;
 	struct page *page = NULL;
@@ -209,8 +210,9 @@ out:
 	spin_unlock(&color_area_arr[nid][color].lock);
 	return page;
 }
+EXPORT_SYMBOL(atomic_get_free_color_page);
 
-static void atomic_insert_free_color_page(struct page *page)
+void atomic_insert_free_color_page(struct page *page)
 {
 	int nid = page_to_nid(page);
 	int color = get_page_color(page);
@@ -221,6 +223,7 @@ static void atomic_insert_free_color_page(struct page *page)
 	++color_area_arr[nid][color].nr_free[chunk];
 	spin_unlock(&color_area_arr[nid][color].lock);
 }
+EXPORT_SYMBOL(atomic_insert_free_color_page);
 
 static bool atomic_release_free_color_page(int nid, int color)
 {
@@ -265,7 +268,8 @@ void rebalance_colormem(int nid, long nr_page)
 		nr_page_target = nr_page - atomic_nr_free_color_page(nid, color);
 		credit = COLOR_ALLOC_MAX_ATTEMPT;
 		while (nr_page_target > 0 && credit > 0) {
-			page = __alloc_pages_nodemask(__GFP_HIGHMEM, COLOR_PAGE_ORDER, nid, &nodemask);
+			page = __alloc_pages_nodemask(__GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0),
+			                              COLOR_PAGE_ORDER, nid, &nodemask);
 			if (!page)
 				break;
 			if (color == get_page_color(page)) {
@@ -1820,7 +1824,7 @@ static void __free_pages_ok(struct page *page, unsigned int order,
 	if (PageColored(page)) {
 		trace_printk("__free_pages_ok: PageColored, order: %d, thp: %d\n", order, PageTransHuge(page));
 		ClearPageColored(page);
-		prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM, 0);
+		prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0), 0);
 		atomic_insert_free_color_page(page);
 		return;
 	}
@@ -3475,9 +3479,9 @@ static void free_unref_page_commit(struct page *page, unsigned long pfn)
 	__count_vm_event(PGFREE);
 
 	if (PageColored(page)) {
-		trace_printk("free_unref_page_commit: PageColored, order: 0, thp: 0\n");
+		trace_printk("free_unref_page_commit: PageColored, thp: %d\n", PageTransHuge(page));
 		ClearPageColored(page);
-		prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM, 0);
+		prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0), 0);
 		atomic_insert_free_color_page(page);
 		return;
 	}
@@ -5249,7 +5253,7 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
 			if (next_color == NR_COLORS)
 				next_color = 0;
 			current->preferred_color = next_color;
-			trace_printk("alloc_color_page: page allocated, color: %d, order: %d\n", get_page_color(page), order);
+			trace_printk("alloc_color_page: page allocated, color: %d, order: %d, THP: %d\n", get_page_color(page), order, PageTransHuge(page));
 			goto out;
 		} else {
 			trace_printk("alloc_color_page: out of page, allocated from the normal routine\n");
