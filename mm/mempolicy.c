@@ -1161,7 +1161,8 @@ static int access_mm(struct mm_struct *mm, int nid, struct colormask *color_mask
 	nodemask_t nmask;
 	LIST_HEAD(pagelist);
 	int err = 0;
-	ktime_t queue_start, migrate_start, putback_start;
+	ktime_t queue_start, migrate_start;
+	// ktime_t putback_start;
 
 	nodes_clear(nmask);
 	node_set(nid, nmask);
@@ -1180,13 +1181,14 @@ static int access_mm(struct mm_struct *mm, int nid, struct colormask *color_mask
 			err = access_pages_dma(&pagelist, nid, color_mask, mode);
 			printk("access_pages_dma: %lld ns\n", ktime_sub(ktime_get(), migrate_start));
 		} else {
-			printk("access_mm: Unknown mode %d\n", mode);
 			err = -EINVAL;
+			printk("access_mm: Unknown mode %d\n", mode);
+			putback_movable_pages(&pagelist);
 		}
 	}
-	putback_start = ktime_get();
-	putback_movable_pages(&pagelist);
-	printk("putback_movable_pages: %lld ns\n", ktime_sub(ktime_get(), putback_start));
+	// putback_start = ktime_get();
+	// putback_movable_pages(&pagelist);
+	// printk("putback_movable_pages: %lld ns\n", ktime_sub(ktime_get(), putback_start));
 	return err;
 }
 

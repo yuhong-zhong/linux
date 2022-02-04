@@ -1818,9 +1818,7 @@ static void __free_pages_ok(struct page *page, unsigned int order,
 		return;
 
 	migratetype = get_pfnblock_migratetype(page, pfn);
-	local_irq_save(flags);
 	__count_vm_events(PGFREE, 1 << order);
-
 	if (PageColored(page)) {
 		trace_printk("__free_pages_ok: PageColored, order: %d, thp: %d\n", order, PageTransHuge(page));
 		ClearPageColored(page);
@@ -1829,6 +1827,7 @@ static void __free_pages_ok(struct page *page, unsigned int order,
 		return;
 	}
 
+	local_irq_save(flags);
 	free_one_page(page_zone(page), page, pfn, order, migratetype,
 		      fpi_flags);
 	local_irq_restore(flags);

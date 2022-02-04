@@ -64,7 +64,8 @@ enum {
 
 #define MP_MEMCPY	(1 << 0)  /* use memcpy to migrate pages */
 #define MP_DMA		(1 << 1)  /* use DMA to migrate pages */
-#define MP_MULTI_CHANNELS (1 << 2)  /* use 8 channels to migrate pages (in DMA mode) */
-#define MP_BATCH_SHIFT	3  /* migration batch size (in DMA mode) */
+#define MP_CHANNEL_SHIFT 2	  /* number of DMA channels */
+#define MP_CHANNEL_MASK ((1 << 3) - 1)
+#define MP_BATCH_SHIFT	5  /* migration batch size (in DMA mode) */
 
 #endif /* _UAPI_LINUX_MEMPOLICY_H */

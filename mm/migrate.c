@@ -60,6 +60,7 @@
 #include "internal.h"
 
 atomic_long_t _get_new_page_time;
+atomic_long_t _put_page_time;
 atomic_long_t _page_copy_time;
 
 /*
@@ -1180,6 +1181,7 @@ static int unmap_and_move(new_page_t get_new_page,
 {
 	int rc = MIGRATEPAGE_SUCCESS;
 	struct page *newpage = NULL;
+	ktime_t start_time;
 
 	if (!thp_migration_supported() && PageTransHuge(page))
 		return -ENOMEM;
@@ -1197,7 +1199,9 @@ static int unmap_and_move(new_page_t get_new_page,
 		goto out;
 	}
 
+	start_time = ktime_get();
 	newpage = get_new_page(page, private);
+	atomic_long_add(ktime_sub(ktime_get(), start_time), &_get_new_page_time);
 	if (!newpage)
 		return -ENOMEM;
 
@@ -1234,7 +1238,9 @@ out:
 			/*
 			 * We release the page in page_handle_poison.
 			 */
+			start_time = ktime_get();
 			put_page(page);
+			atomic_long_add(ktime_sub(ktime_get(), start_time), &_put_page_time);
 	} else {
 		if (rc != -EAGAIN) {
 			if (likely(!__PageMovable(page))) {
@@ -1288,6 +1294,7 @@ static int unmap_and_move_huge_page(new_page_t get_new_page,
 	struct page *new_hpage;
 	struct anon_vma *anon_vma = NULL;
 	struct address_space *mapping = NULL;
+	ktime_t start_time;
 
 	/*
 	 * Migratability of hugepages depends on architectures and their size.
@@ -1301,7 +1308,9 @@ static int unmap_and_move_huge_page(new_page_t get_new_page,
 		return -ENOSYS;
 	}
 
+	start_time = ktime_get();
 	new_hpage = get_new_page(hpage, private);
+	atomic_long_add(ktime_sub(ktime_get(), start_time), &_get_new_page_time);
 	if (!new_hpage)
 		return -ENOMEM;
 
@@ -1391,10 +1400,12 @@ out:
 	 * it.  Otherwise, put_page() will drop the reference grabbed during
 	 * isolation.
 	 */
+	start_time = ktime_get();
 	if (put_new_page)
 		put_new_page(new_hpage, private);
 	else
 		putback_active_hugepage(new_hpage);
+	atomic_long_add(ktime_sub(ktime_get(), start_time), &_put_page_time);
 
 	return rc;
 }
@@ -1441,6 +1452,7 @@ int migrate_pages(struct list_head *from, new_page_t get_new_page,
 
 	if (reason == MR_SYSCALL) {
 		atomic_long_set(&_get_new_page_time, 0);
+		atomic_long_set(&_put_page_time, 0);
 		atomic_long_set(&_page_copy_time, 0);
 	}
 	num_pages_copied = 0;
@@ -1541,6 +1553,7 @@ retry:
 out:
 	if (reason == MR_SYSCALL) {
 		printk("get_new_page time: %ld ns\n", atomic_long_read(&_get_new_page_time));
+		printk("put page time: %ld ns\n", atomic_long_read(&_put_page_time));
 		printk("page copy time: %ld ns\n", atomic_long_read(&_page_copy_time));
 		printk("#pages: %lld\n", num_pages_copied);
 	}
@@ -1597,6 +1610,7 @@ static int unmap_and_move_th(new_page_t get_new_page, free_page_t put_new_page,
 	struct migrate_dma_context *ctx)
 {
 	int rc;
+	ktime_t start_time;
 
 	// XXX unmap_and_move
 	ctx->page = page;
@@ -1640,7 +1654,9 @@ static int unmap_and_move_th(new_page_t get_new_page, free_page_t put_new_page,
 		return -EINVAL;
 	}
 
+	start_time = ktime_get();
 	ctx->newpage = get_new_page(page, private);
+	atomic_long_add(ktime_sub(ktime_get(), start_time), &_get_new_page_time);
 	VM_BUG_ON_PAGE(!ctx->newpage, page);
 
 	// XXX __unmap_and_move
@@ -1807,16 +1823,20 @@ err:
 		put_page(page);
 	}
 err_put_new:
+	start_time = ktime_get();
 	if (put_new_page)
 		put_new_page(ctx->newpage, private);
 	else
 		put_page(ctx->newpage);
+	atomic_long_add(ktime_sub(ktime_get(), start_time), &_put_page_time);
 	return rc;
 }
 
 static void unmap_and_move_bh(free_page_t put_new_page, unsigned long private,
 	int reason, struct migrate_dma_context *ctx)
 {
+	ktime_t start_time;
+
 	// XXX migrate_page_copy
 	migrate_page_states(ctx->newpage, ctx->page);
 	// XXX migrate_page
@@ -1838,7 +1858,9 @@ static void unmap_and_move_bh(free_page_t put_new_page, unsigned long private,
 	mod_node_page_state(page_pgdat(ctx->page), NR_ISOLATED_ANON +
 		page_is_file_lru(ctx->page), -thp_nr_pages(ctx->page));
 	VM_BUG_ON_PAGE(reason == MR_MEMORY_FAILURE, ctx->page);
+	start_time = ktime_get();
 	put_page(ctx->page);
+	atomic_long_add(ktime_sub(ktime_get(), start_time), &_put_page_time);
 }
 
 int migrate_pages_dma(struct list_head *from, new_page_t get_new_page,
@@ -1880,18 +1902,16 @@ int migrate_pages_dma(struct list_head *from, new_page_t get_new_page,
 
 	if (reason == MR_SYSCALL) {
 		atomic_long_set(&_get_new_page_time, 0);
+		atomic_long_set(&_put_page_time, 0);
 		atomic_long_set(&_page_copy_time, 0);
 	}
 
-	if (syscall_mode & MP_MULTI_CHANNELS) {
-		num_channels = COLOR_NUM_CHANNELS;
-	} else {
-		num_channels = 1;
-	}
+	num_channels = ((syscall_mode >> MP_CHANNEL_SHIFT) & MP_CHANNEL_MASK) + 1;
 	batch_size = syscall_mode >> MP_BATCH_SHIFT;
 	if (batch_size == 0) {
 		batch_size = 1;
 	}
+	printk("migrate_pages_dma: number of channels %ld\n", num_channels);
 	printk("migrate_pages_dma: batch size %ld\n", batch_size);
 
 	ctx_arr = kmalloc(sizeof(*ctx_arr) * batch_size * COLOR_NUM_CHANNELS, GFP_KERNEL);
@@ -2076,6 +2096,7 @@ int migrate_pages_dma(struct list_head *from, new_page_t get_new_page,
 // out:
 	if (reason == MR_SYSCALL) {
 		printk("get_new_page: %ld ns\n", atomic_long_read(&_get_new_page_time));
+		printk("put page time: %ld ns\n", atomic_long_read(&_put_page_time));
 		printk("page copy time: %ld ns\n", atomic_long_read(&_page_copy_time));
 		printk("DMA loop: %lld ns\n", ktime_sub(ktime_get(), start));
 		printk("unmap_and_move_th: %lld ns\n", unmap_th_time);
@@ -2136,6 +2157,7 @@ int migrate_pages_memcpy(struct list_head *from, new_page_t get_new_page,
 
 	if (reason == MR_SYSCALL) {
 		atomic_long_set(&_get_new_page_time, 0);
+		atomic_long_set(&_put_page_time, 0);
 		atomic_long_set(&_page_copy_time, 0);
 	}
 
@@ -2205,6 +2227,7 @@ int migrate_pages_memcpy(struct list_head *from, new_page_t get_new_page,
 // out:
 	if (reason == MR_SYSCALL) {
 		printk("get_new_page: %ld ns\n", atomic_long_read(&_get_new_page_time));
+		printk("put page time: %ld ns\n", atomic_long_read(&_put_page_time));
 		printk("page copy time: %ld ns\n", atomic_long_read(&_page_copy_time));
 		printk("loop: %lld ns\n", ktime_sub(ktime_get(), start));
 		printk("unmap_and_move_th: %lld ns\n", unmap_th_time);
@@ -2273,10 +2296,37 @@ struct page *alloc_migration_target(struct page *page, unsigned long private)
 	return new_page;
 }
 
+void putback_page_bh(struct page *page)
+{
+	if (unlikely(PageHuge(page))) {
+		putback_active_hugepage(page);
+		return;
+	}
+	list_del(&page->lru);
+	/*
+	 * We isolated non-lru movable page so here we can use
+	 * __PageMovable because LRU page's mapping cannot have
+	 * PAGE_MAPPING_MOVABLE.
+	 */
+	if (unlikely(__PageMovable(page))) {
+		VM_BUG_ON_PAGE(!PageIsolated(page), page);
+		lock_page(page);
+		if (PageMovable(page))
+			putback_movable_page(page);
+		else
+			__ClearPageIsolated(page);
+		unlock_page(page);
+		put_page(page);
+	} else {
+		mod_node_page_state(page_pgdat(page), NR_ISOLATED_ANON +
+				page_is_file_lru(page), -thp_nr_pages(page));
+		putback_lru_page(page);
+	}
+}
+
 int access_pages(struct list_head *from_page_list, int nid, struct colormask *color_mask, int mode)
 {
-	struct list_head *pos;
-	struct page *cur_page;
+	struct page *cur_page, *next_page;
 	int page_color;
 	ktime_t start;
 	uint64_t i;
@@ -2285,13 +2335,16 @@ int access_pages(struct list_head *from_page_list, int nid, struct colormask *co
 	start = ktime_get();
 	num_pages_copied = 0;
 
-	list_for_each(pos, from_page_list) {
-		cur_page = list_entry(pos, struct page, lru);
+	list_for_each_entry_safe(cur_page, next_page, from_page_list, lru) {
 		page_color = get_page_color(cur_page);
-		if (!color_isset(page_color, *color_mask))
+		if (!color_isset(page_color, *color_mask)) {
+			putback_page_bh(cur_page);
 			continue;
-		if (PageHuge(cur_page))
+		}
+		if (PageHuge(cur_page)) {
+			putback_page_bh(cur_page);
 			continue;
+		}
 		if (PageTransHuge(cur_page)) {
 			for (i = 0; i < thp_nr_pages(cur_page); ++i) {
 				access_page(page_address(nth_page(cur_page, i)));
@@ -2301,6 +2354,7 @@ int access_pages(struct list_head *from_page_list, int nid, struct colormask *co
 		}
 		++num_pages_copied;
 		cond_resched();
+		putback_page_bh(cur_page);
 	}
 
 	printk("access_pages loop: %lld ns\n", ktime_sub(ktime_get(), start));
@@ -2318,6 +2372,7 @@ int access_pages_dma(struct list_head *from_page_list, int nid, struct colormask
 	int page_color;
 	uint64_t num_inflight_pages;
 	dma_cookie_t *cookie_arr;
+	struct page **page_arr;
 	dma_cookie_t last, used;
 	bool has_req_sent;
 	enum dma_status status;
@@ -2326,22 +2381,27 @@ int access_pages_dma(struct list_head *from_page_list, int nid, struct colormask
 	uint64_t num_pages_copied;
 	int ret = 0;
 
-	if (mode & MP_MULTI_CHANNELS) {
-		num_channels = COLOR_NUM_CHANNELS;
-	} else {
-		num_channels = 1;
-	}
+	// TODO: channel can be pre-allocated
+	num_channels = ((mode >> MP_CHANNEL_SHIFT) & MP_CHANNEL_MASK) + 1;
 	batch_size = mode >> MP_BATCH_SHIFT;
 	if (batch_size == 0) {
 		batch_size = 1;
 	}
+	printk("access_pages_dma: number of channels %ld\n", num_channels);
 	printk("access_pages_dma: batch size %ld\n", batch_size);
 
+	// TODO: array can also be pre-allocated
 	cookie_arr = kmalloc(sizeof(*cookie_arr) * batch_size * COLOR_NUM_CHANNELS, GFP_KERNEL);
 	if (cookie_arr == NULL) {
 		printk("access_pages_dma: failed to allocate cookie_arr\n");
 		ret = -ENOMEM;
 		goto out;
+	}
+	page_arr = kmalloc(sizeof(*page_arr) * batch_size * COLOR_NUM_CHANNELS, GFP_KERNEL);
+	if (page_arr == NULL) {
+		printk("access_pages_dma: failed to allocate page_arr\n");
+		ret = -ENOMEM;
+		goto free_cookie;
 	}
 
 	// Allocate DMA channel
@@ -2390,6 +2450,7 @@ int access_pages_dma(struct list_head *from_page_list, int nid, struct colormask
 			}
 			if (cur_page != NULL) {
 				cookie_arr[i + j * batch_size] = queue_dma_req(chan_arr[j], cur_page, garbage_page);
+				page_arr[i + j * batch_size] = cur_page;
 				++num_inflight_pages;
 				has_req_sent = true;
 			} else {
@@ -2409,6 +2470,8 @@ int access_pages_dma(struct list_head *from_page_list, int nid, struct colormask
 					continue;
 				status = dma_async_is_complete(cookie_arr[i + j * batch_size], last, used);
 				if (status == DMA_COMPLETE) {
+					putback_page_bh(page_arr[i + j * batch_size]);
+
 					++num_pages_copied;
 					--num_inflight_pages;
 
@@ -2422,6 +2485,7 @@ int access_pages_dma(struct list_head *from_page_list, int nid, struct colormask
 					}
 					if (cur_page != NULL) {
 						cookie_arr[i + j * batch_size] = queue_dma_req(chan_arr[j], cur_page, garbage_page);
+						page_arr[i + j * batch_size] = cur_page;
 						has_req_sent = true;
 						++num_inflight_pages;
 					} else {
@@ -2446,6 +2510,9 @@ free_chan:
 			dma_release_channel(chan_arr[i]);
 		}
 	}
+	kfree(page_arr);
+free_cookie:
+	kfree(cookie_arr);
 out:
 	return ret;
 }
