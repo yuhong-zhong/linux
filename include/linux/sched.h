@@ -35,6 +35,7 @@
 #include <linux/seqlock.h>
 #include <linux/kcsan.h>
 #include <asm/kmap_size.h>
+#include <linux/colormask.h>
 
 /* task_struct member predeclarations (sorted alphabetically): */
 struct audit_context;
@@ -822,6 +823,9 @@ struct task_struct {
 	unsigned short			migration_disabled;
 #endif
 	unsigned short			migration_flags;
+
+	colormask_t			colors_allowed;
+	int				preferred_color;
 
 #ifdef CONFIG_PREEMPT_RCU
 	int				rcu_read_lock_nesting;
