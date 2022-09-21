@@ -1347,4 +1347,9 @@ int __sys_getsockopt(int fd, int level, int optname, char __user *optval,
 		int __user *optlen);
 int __sys_setsockopt(int fd, int level, int optname, char __user *optval,
 		int optlen);
+
+asmlinkage long sys_set_color(pid_t pid, unsigned int len, unsigned long __user *user_mask_ptr);
+asmlinkage long sys_get_color(pid_t pid, unsigned int len, unsigned long __user *user_mask_ptr);
+asmlinkage long sys_reserve_color(long nr_page);
+
 #endif

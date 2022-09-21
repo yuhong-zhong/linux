@@ -136,6 +136,7 @@ enum pageflags {
 	PG_young,
 	PG_idle,
 #endif
+	PG_colored,
 #ifdef CONFIG_64BIT
 	PG_arch_2,
 #endif
@@ -342,6 +343,7 @@ PAGEFLAG(Workingset, workingset, PF_HEAD)
 __PAGEFLAG(Slab, slab, PF_NO_TAIL)
 __PAGEFLAG(SlobFree, slob_free, PF_NO_TAIL)
 PAGEFLAG(Checked, checked, PF_NO_COMPOUND)	   /* Used by some filesystems */
+PAGEFLAG(Colored, colored, PF_HEAD)
 
 /* Xen */
 PAGEFLAG(Pinned, pinned, PF_NO_COMPOUND)
@@ -842,7 +844,7 @@ static inline void ClearPageSlabPfmemalloc(struct page *page)
  * alloc-free cycle to prevent from reusing the page.
  */
 #define PAGE_FLAGS_CHECK_AT_PREP	\
-	(((1UL << NR_PAGEFLAGS) - 1) & ~__PG_HWPOISON)
+	(((1UL << NR_PAGEFLAGS) - 1) & ~__PG_HWPOISON & ~(1UL << PG_colored))
 
 #define PAGE_FLAGS_PRIVATE				\
 	(1UL << PG_private | 1UL << PG_private_2)

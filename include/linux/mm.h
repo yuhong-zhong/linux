@@ -2464,6 +2464,8 @@ extern int watermark_boost_factor;
 extern int watermark_scale_factor;
 extern bool arch_has_descending_max_zone_pfns(void);
 
+extern void colormem_init(void);
+
 /* nommu.c */
 extern atomic_long_t mmap_pages_allocated;
 extern int nommu_shrink_inode_mappings(struct inode *, size_t, size_t);
