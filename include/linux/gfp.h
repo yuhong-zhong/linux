@@ -7,6 +7,7 @@
 #include <linux/stddef.h>
 #include <linux/linkage.h>
 #include <linux/topology.h>
+#include <linux/colormask.h>
 
 /* The typedef is in types.h but we want the documentation here */
 #if 0
@@ -538,6 +539,14 @@ static inline void arch_free_page(struct page *page, int order) { }
 static inline void arch_alloc_page(struct page *page, int order) { }
 #endif
 
+int get_colorinfo(struct colorinfo **ci);
+int get_page_color(struct page *page);
+int get_page_chunk(struct page *page);
+struct page *alloc_color_page(nodemask_t *nodemask, int preferred_nid,
+                              colormask_t *colormask, int preferred_color);
+void colormem_init(void);
+void rebalance_colormem(int nid, long nr_page);
+
 struct page *__alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
 		nodemask_t *nodemask);
 struct folio *__folio_alloc(gfp_t gfp, unsigned int order, int preferred_nid,
@@ -715,5 +724,11 @@ void free_contig_range(unsigned long pfn, unsigned long nr_pages);
 /* CMA stuff */
 extern void init_cma_reserved_pageblock(struct page *page);
 #endif
+
+void atomic_insert_free_color_page(struct page *page);
+struct page *atomic_get_free_color_page(int nid, int color);
+struct page *alloc_color_page(nodemask_t *nodemask, int preferred_nid,
+                              colormask_t *colormask, int preferred_color);
+void atomic_reset_preferred_list(int nid, int color, bool lock);
 
 #endif /* __LINUX_GFP_H */
