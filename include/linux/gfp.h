@@ -536,6 +536,9 @@ struct page *alloc_color_page(nodemask_t *nodemask, int preferred_nid,
 void colormem_init(void);
 void rebalance_colormem(int nid, long nr_page);
 
+unsigned long atomic_nr_free_ppool_page(void);
+void refill_ppool(unsigned long target_num_pages, int nid, colormask_t *colormask);
+
 struct page *__alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
 		nodemask_t *nodemask);
 

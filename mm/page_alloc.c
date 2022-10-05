@@ -96,6 +96,15 @@ struct free_color_area {
 
 struct free_color_area color_area_arr[MAX_NUMNODES][NR_COLORS];
 
+struct private_color_pool {
+	struct list_head free_list;
+	unsigned long nr_pages;
+	spinlock_t lock;
+} private_color_pool;
+
+static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags,
+							unsigned int alloc_flags);
+
 int get_colorinfo(struct colorinfo **ci)
 {
 	int nr_numa;
@@ -361,6 +370,113 @@ out:
 }
 EXPORT_SYMBOL(alloc_color_page);
 
+struct page *alloc_ppool_page(void)
+{
+	unsigned long flags;
+	struct page *page = NULL;
+
+	spin_lock_irqsave(&private_color_pool.lock, flags);
+	if (private_color_pool.nr_pages > 0) {
+		WARN_ON(list_empty(&private_color_pool.free_list));
+		page = list_first_entry(&private_color_pool.free_list, struct page, lru);
+		list_del_init(&page->lru);
+		--private_color_pool.nr_pages;
+	}
+	spin_unlock_irqrestore(&private_color_pool.lock, flags);
+	if (page)
+		SetPagePpooled(page);
+	if (page) {
+		int index = atomic_fetch_inc(&pfn_index);
+		if (index >= 0 && index < COLOR_NR_PFNS)
+			pfn_arr[index] = page_to_pfn(page);
+	}
+	return page;
+}
+
+void free_ppool_page(struct page *page)
+{
+	unsigned long flags;
+
+	WARN_ON(!PagePpooled(page));
+	ClearPagePpooled(page);
+	prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0), 0);
+
+	spin_lock_irqsave(&private_color_pool.lock, flags);
+	list_add_tail(&page->lru, &private_color_pool.free_list);
+	++private_color_pool.nr_pages;
+	spin_unlock_irqrestore(&private_color_pool.lock, flags);
+}
+
+unsigned long atomic_nr_free_ppool_page(void)
+{
+	unsigned long flags;
+	unsigned long nr_pages;
+
+	spin_lock_irqsave(&private_color_pool.lock, flags);
+	nr_pages = private_color_pool.nr_pages;
+	spin_unlock_irqrestore(&private_color_pool.lock, flags);
+	return nr_pages;
+}
+
+void refill_ppool(unsigned long target_num_pages, int nid, colormask_t *colormask)
+{
+	unsigned long flags;
+	struct page *page;
+	int color = colormask_first(colormask);
+	int retry = 0;
+	WARN_ON(color == NR_COLORS);  // colormask is empty
+
+resume:
+	spin_lock_irqsave(&private_color_pool.lock, flags);
+	while (private_color_pool.nr_pages > target_num_pages) {
+		// Release a page
+		WARN_ON(list_empty(&private_color_pool.free_list));
+		page = list_first_entry(&private_color_pool.free_list, struct page, lru);
+		list_del_init(&page->lru);
+		--private_color_pool.nr_pages;
+		atomic_insert_free_color_page(page);
+
+		if (need_resched()) {
+			spin_unlock_irqrestore(&private_color_pool.lock, flags);
+			cond_resched();
+			goto resume;
+		}
+		if (signal_pending(current)) {
+			goto unlock;
+		}
+	}
+
+	while (target_num_pages > private_color_pool.nr_pages) {
+		// Get a page
+		page = atomic_get_free_color_page(nid, color);
+		if (page != NULL) {
+			retry = 0;
+			list_add_tail(&page->lru, &private_color_pool.free_list);
+			++private_color_pool.nr_pages;
+		} else {
+			++retry;
+			if (retry == NR_COLORS) {
+				// Cannot get enough pages from the coloring pool
+				goto unlock;
+			}
+		}
+		color = colormask_next(color, colormask);
+		if (color == NR_COLORS)
+			color = colormask_first(colormask);
+
+		if (need_resched()) {
+			spin_unlock_irqrestore(&private_color_pool.lock, flags);
+			cond_resched();
+			goto resume;
+		}
+		if (signal_pending(current)) {
+			goto unlock;
+		}
+	}
+unlock:
+	spin_unlock_irqrestore(&private_color_pool.lock, flags);
+}
+
 void __init colormem_init()
 {
 	int nid, color, chunk;
@@ -376,6 +492,10 @@ void __init colormem_init()
 			color_area_arr[nid][color].preferred_list = 0;
 		}
 	}
+
+	INIT_LIST_HEAD(&private_color_pool.free_list);
+	private_color_pool.nr_pages = 0;
+	spin_lock_init(&private_color_pool.lock);
 
 	for_each_online_node(nid)
 		printk("NUMA %d - node_start_pfn: %ld\n", nid, NODE_DATA(nid)->node_start_pfn);
@@ -1934,9 +2054,6 @@ void __meminit reserve_bootmem_region(phys_addr_t start, phys_addr_t end)
 	}
 }
 
-static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags,
-							unsigned int alloc_flags);
-
 static void __free_pages_ok(struct page *page, unsigned int order,
 			    fpi_t fpi_flags)
 {
@@ -1950,6 +2067,10 @@ static void __free_pages_ok(struct page *page, unsigned int order,
 
 	migratetype = get_pfnblock_migratetype(page, pfn);
 	__count_vm_events(PGFREE, 1 << order);
+	if (PagePpooled(page)) {
+		free_ppool_page(page);
+		return;
+	}
 	if (PageColored(page)) {
 		ClearPageColored(page);
 		prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0), 0);
@@ -3706,6 +3827,10 @@ void free_unref_page(struct page *page, unsigned int order)
 	if (!free_unref_page_prepare(page, pfn, order))
 		return;
 
+	if (PagePpooled(page)) {
+		free_ppool_page(page);
+		return;
+	}
 	if (PageColored(page)) {
 		ClearPageColored(page);
 		prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0), 0);
@@ -5667,6 +5792,17 @@ struct page *__alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
 
 	if ((gfp_mask & GFP_COLOR) == GFP_COLOR
 	    && order == COLOR_PAGE_ORDER
+	    && current->use_ppool) {
+		page = alloc_ppool_page();
+		if (page) {
+			goto out;
+		} else {
+			trace_printk("alloc_ppool_page: failed to allocate a page, fall back to the normal path\n");
+		}
+	}
+
+	if ((gfp_mask & GFP_COLOR) == GFP_COLOR
+	    && order == COLOR_PAGE_ORDER
 	    && colormask_weight(&current->colors_allowed) < NR_COLORS
 	    && colormask_weight(&current->colors_allowed) > 0) {
 		/* assumption: one thread never trigger multiple page faults simultaneously */
@@ -5683,7 +5819,7 @@ struct page *__alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
 			current->preferred_color = next_color;
 			goto out;
 		} else {
-			trace_printk("alloc_color_page: out of page, allocated from the normal routine\n");
+			trace_printk("alloc_color_page: failed to allocate a page, fall back to the normal path\n");
 		}
 	}
 
