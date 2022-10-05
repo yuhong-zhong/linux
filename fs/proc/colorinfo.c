@@ -188,10 +188,77 @@ static const struct proc_ops pfn_proc_ops = {
 	.proc_release	= seq_release,
 };
 
+/*
+ * Private color pools
+ */
+
+static int color_ppool_proc_show(struct seq_file *m, void *v)
+{
+	seq_printf(m, "%lu\n", atomic_nr_free_ppool_page());
+	return 0;
+}
+
+static int color_ppool_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, color_ppool_proc_show, NULL);
+}
+
+static long color_ppool_proc_ioctl(struct file *file, unsigned int request, unsigned long arg)
+{
+	switch (request) {
+	case PPOOL_IOC_FILL:
+	{
+		struct ppool_fill_req req;
+		colormask_t colormask;
+		if (copy_from_user(&req, (void __user *) arg, sizeof(req)))
+			return -EFAULT;
+		if (copy_from_user(&colormask, (void __user *) req.user_mask_ptr, colormask_size()))
+			return -EFAULT;
+		if (colormask_first(&colormask) == NR_COLORS)
+			return -EINVAL;
+		if (!node_online(req.nid))
+			return -EINVAL;
+		refill_ppool(req.target_num_pages, req.nid, &colormask);
+		return 0;
+	}
+	case PPOOL_IOC_ENABLE:
+	case PPOOL_IOC_DISABLE:
+	{
+		int pid;
+		struct task_struct *p;
+		int ret;
+
+		if (copy_from_user(&pid, (void __user *) arg, sizeof(pid)))
+			return -EFAULT;
+		rcu_read_lock();
+		p = pid ? find_task_by_vpid(pid) : current;
+		if (p) {
+			p->use_ppool = (request == PPOOL_IOC_ENABLE);
+			ret = 0;
+		} else {
+			ret = -EINVAL;
+		}
+		rcu_read_unlock();
+		return ret;
+	}
+	default:
+		return -ENOTTY;
+	}
+}
+
+static const struct proc_ops color_ppool_proc_ops = {
+	.proc_open	= color_ppool_proc_open,
+	.proc_read	= seq_read,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= single_release,
+	.proc_ioctl = color_ppool_proc_ioctl,
+};
+
 static int __init proc_colorinfo_init(void)
 {
 	proc_create("colorinfo", 0, NULL, &colorinfo_proc_ops);
 	proc_create("pfn_debug", 0, NULL, &pfn_proc_ops);
+	proc_create("color_ppool", 0, NULL, &color_ppool_proc_ops);
 	return 0;
 }
 fs_initcall(proc_colorinfo_init);
