@@ -9,8 +9,9 @@
 #include <linux/kernel.h>
 #include <linux/threads.h>
 #include <linux/bitmap.h>
+#include <uapi/linux/page_coloring.h>
 
-// #define COLOR_THP  // Enable coloring for Transparent Huge Page
+#define COLOR_THP  // Enable coloring for Transparent Huge Page
 
 /* FIXME: update this info whenever try on new machine */
 #define DRAM_SIZE_PER_NODE (96ul << 30)  // 96 GB DRAM per NUMA node
