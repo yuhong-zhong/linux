@@ -2065,7 +2065,7 @@ static void intel_pmu_drain_pebs_nhm(struct pt_regs *iregs, struct perf_sample_d
 	}
 
 	for_each_set_bit(bit, (unsigned long *)&mask, size) {
-		if ((counts[bit] == 0) && (error[bit] == 0))
+		if (!test_bit(bit, (unsigned long *)&cpuc->pebs_enabled))
 			continue;
 
 		event = cpuc->events[bit];
@@ -2074,6 +2074,14 @@ static void intel_pmu_drain_pebs_nhm(struct pt_regs *iregs, struct perf_sample_d
 
 		if (WARN_ON_ONCE(!event->attr.precise_ip))
 			continue;
+
+		/* PEBS workaround */
+		if ((counts[bit] == 0) && (error[bit] == 0)) {
+			if (event->hw.flags & PERF_X86_EVENT_AUTO_RELOAD) {
+				intel_pmu_save_and_restart_reload(event, 0);
+			}
+			continue;
+		}
 
 		/* log dropped samples number */
 		if (error[bit]) {
