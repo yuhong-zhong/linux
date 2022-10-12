@@ -4009,6 +4009,14 @@ static void perf_adjust_period(struct perf_event *event, u64 nsec, u64 count, bo
 	}
 }
 
+// FIXME: make it more generic
+
+// from /arch/x86/events/perf_event.h
+#define PERF_X86_EVENT_AUTO_RELOAD	0x00200 /* use PEBS auto-reload */
+
+// from /arch/x86/events/intel/ds.c
+int intel_pmu_save_and_restart_reload(struct perf_event *event, int count);
+
 /*
  * combine freq adjustment with unthrottling to avoid two passes over the
  * events. At the same time, make sure, having freq events does not change
@@ -4022,13 +4030,13 @@ static void perf_adjust_freq_unthr_context(struct perf_event_context *ctx,
 	u64 now, period = TICK_NSEC;
 	s64 delta;
 
-	/*
-	 * only need to iterate over all events iff:
-	 * - context have events in frequency mode (needs freq adjust)
-	 * - there are events to unthrottle on this cpu
-	 */
-	if (!(ctx->nr_freq || needs_unthr))
-		return;
+	// /*
+	//  * only need to iterate over all events iff:
+	//  * - context have events in frequency mode (needs freq adjust)
+	//  * - there are events to unthrottle on this cpu
+	//  */
+	// if (!(ctx->nr_freq || needs_unthr))
+	// 	return;
 
 	raw_spin_lock(&ctx->lock);
 	perf_pmu_disable(ctx->pmu);
@@ -4049,6 +4057,10 @@ static void perf_adjust_freq_unthr_context(struct perf_event_context *ctx,
 			perf_log_throttle(event, 1);
 			event->pmu->start(event, 0);
 		}
+
+		// FIXME: make it more generic
+		if (event->attr.precise_ip > 0 && hwc->flags & PERF_X86_EVENT_AUTO_RELOAD)
+			intel_pmu_save_and_restart_reload(event, 0);
 
 		if (!event->attr.freq || !event->attr.sample_freq)
 			goto next;

@@ -1804,8 +1804,7 @@ void intel_pmu_auto_reload_read(struct perf_event *event)
 /*
  * Special variant of intel_pmu_save_and_restart() for auto-reload.
  */
-static int
-intel_pmu_save_and_restart_reload(struct perf_event *event, int count)
+int intel_pmu_save_and_restart_reload(struct perf_event *event, int count)
 {
 	struct hw_perf_event *hwc = &event->hw;
 	int shift = 64 - x86_pmu.cntval_bits;
