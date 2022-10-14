@@ -353,6 +353,7 @@ struct vm_area_struct;
 #define GFP_TRANSHUGE_LIGHT	((GFP_HIGHUSER_MOVABLE | __GFP_COMP | \
 			 __GFP_NOMEMALLOC | __GFP_NOWARN) & ~__GFP_RECLAIM)
 #define GFP_TRANSHUGE	(GFP_TRANSHUGE_LIGHT | __GFP_DIRECT_RECLAIM)
+#define GFP_COLOR ((GFP_HIGHUSER) & (~__GFP_RECLAIM))
 
 /* Convert GFP flags to their corresponding migrate type */
 #define GFP_MOVABLE_MASK (__GFP_RECLAIMABLE|__GFP_MOVABLE)
@@ -549,6 +550,11 @@ void rebalance_colormem(int nid, long nr_page);
 
 unsigned long atomic_nr_free_ppool_page(void);
 void refill_ppool(unsigned long target_num_pages, int nid, colormask_t *colormask);
+
+inline struct page *
+___alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
+		nodemask_t *nodemask, int *preferred_color, colormask_t *colormask,
+		bool use_ppool);
 
 struct page *__alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
 		nodemask_t *nodemask);
