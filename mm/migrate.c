@@ -1683,8 +1683,9 @@ static int do_move_pages_to_node(struct mm_struct *mm,
  *         target node
  *     1 - when it has been queued
  */
-static int add_page_for_migration(struct mm_struct *mm, unsigned long addr,
-		int node, struct list_head *pagelist, bool migrate_all)
+static int _add_page_for_migration(struct mm_struct *mm, unsigned long addr,
+		int node, struct list_head *pagelist, bool migrate_all,
+		bool only_colored_or_ppooled)
 {
 	struct vm_area_struct *vma;
 	struct page *page;
@@ -1726,6 +1727,8 @@ static int add_page_for_migration(struct mm_struct *mm, unsigned long addr,
 		struct page *head;
 
 		head = compound_head(page);
+		if (only_colored_or_ppooled && (!PageColored(head) && !PagePpooled(head)))
+			goto out_putpage;
 		err = isolate_lru_page(head);
 		if (err)
 			goto out_putpage;
@@ -1746,6 +1749,13 @@ out_putpage:
 out:
 	mmap_read_unlock(mm);
 	return err;
+}
+
+static inline int add_page_for_migration(struct mm_struct *mm, unsigned long addr,
+		int node, struct list_head *pagelist, bool migrate_all)
+{
+	return _add_page_for_migration(mm, addr, node, pagelist,
+			migrate_all, false);
 }
 
 static int move_pages_and_store_status(struct mm_struct *mm, int node,
@@ -2045,6 +2055,98 @@ SYSCALL_DEFINE6(move_pages, pid_t, pid, unsigned long, nr_pages,
 		int __user *, status, int, flags)
 {
 	return kernel_move_pages(pid, nr_pages, pages, nodes, status, flags);
+}
+
+struct color_remap_control {
+	int nid;
+	int preferred_color;
+	colormask_t *colormask;
+};
+
+struct page *color_remap_alloc(struct page *page, unsigned long private)
+{
+	struct color_remap_control *ctrl = (struct color_remap_control *) private;
+	nodemask_t nodemask;
+
+	// color_remap ensures that queued pages should be either colored or ppooled
+	VM_BUG_ON_PAGE(!PageColored(page) && !PagePpooled(page), page);
+
+	nodes_clear(nodemask);
+	node_set(ctrl->nid, nodemask);
+	return ___alloc_pages(GFP_COLOR, COLOR_PAGE_ORDER, ctrl->nid,
+			&nodemask, &ctrl->preferred_color, ctrl->colormask, false);
+}
+
+int color_remap(struct color_remap_req *req, colormask_t *colormask)
+{
+	struct mm_struct *mm;
+	int ret;
+	nodemask_t task_nodes;
+	LIST_HEAD(pagelist);
+	int i;
+	int num_get_page_err = 0;
+	int num_add_page_err = 0;
+	struct color_remap_control ctrl = {
+		.nid = req->nid,
+		.preferred_color = colormask_first(colormask),
+		.colormask = colormask,
+	};
+	int num_migrate_err = 0;
+
+	// XXX: kernel_move_pages
+	mm = find_mm_struct(req->pid, &task_nodes);
+	if (IS_ERR(mm))
+		return PTR_ERR(mm);
+	// For now, we do not require req->nid to be set in task_nodes
+
+	// XXX: do_pages_move
+	migrate_prep();
+
+	for (i = 0; i < req->num_pages; ++i) {
+		void __user *page;
+		unsigned long addr;
+		int err;
+		err = get_user(page, req->page_arr + i);
+		if (err) {
+			num_get_page_err++;
+			break;
+		}
+		addr = (unsigned long) untagged_addr(page);
+		err = _add_page_for_migration(mm, addr, NUMA_NO_NODE,
+				&pagelist, true, true);
+		if (err <= 0)
+			num_add_page_err++;
+	}
+	if (num_get_page_err > 0)
+		printk("color_remap: Failed to get the addresses of %d pages\n",
+				num_get_page_err);
+	if (num_add_page_err > 0)
+		printk("color_remap: Failed to isolate %d pages\n",
+				num_add_page_err);
+
+	// XXX: move_pages_and_store_status
+	if (list_empty(&pagelist)) {
+		ret = 0;
+		goto put_mm;
+	}
+
+	// XXX: do_move_pages_to_node
+	num_migrate_err = migrate_pages(&pagelist, color_remap_alloc,
+			NULL, (unsigned long) &ctrl, MIGRATE_SYNC,
+			MR_SYSCALL);
+	if (num_migrate_err > 0) {
+		printk("color_remap: Failed to migrate %d pages\n",
+			num_migrate_err);
+		putback_movable_pages(&pagelist);
+	}
+	ret = 0;
+
+	// XXX: move_pages_and_store_status
+	// XXX: do_pages_move
+	// XXX: kernel_move_pages
+put_mm:
+	mmput(mm);
+	return ret;
 }
 
 #ifdef CONFIG_NUMA_BALANCING
