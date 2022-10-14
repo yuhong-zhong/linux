@@ -13,11 +13,6 @@
 
 #define COLOR_THP  // Enable coloring for Transparent Huge Page
 
-/* FIXME: update this info whenever try on new machine */
-#define DRAM_SIZE_PER_NODE (96ul << 30)  // 96 GB DRAM per NUMA node
-#define NR_COLORS 768u  // 768 colors; each color represents 96 GB / 768 = 128 MB DRAM
-#define NR_PMEM_CHUNK 8  // Optane to DRAM ratio is 1:8; each DRAM line corresponds to 8 Optane lines
-
 #ifdef COLOR_THP
 #define COLOR_PAGE_SHIFT HPAGE_PMD_SHIFT
 #else
@@ -118,6 +113,10 @@ static inline unsigned int colormask_weight(const struct colormask *srcp)
 int set_colors_allowed_ptr(struct task_struct *p, const struct colormask *new_mask);
 
 int get_user_color_mask(unsigned long __user *user_mask_ptr, unsigned len, struct colormask *new_mask);
+
+int color_remap(struct color_remap_req *req, colormask_t *colormask);
+
+// int color_swap(struct color_swap_req *req);
 
 struct colorinfo {
 	__u32 nid;

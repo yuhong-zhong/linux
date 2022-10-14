@@ -108,11 +108,45 @@ static int colorinfo_proc_open(struct inode *inode, struct file *file)
 	return seq_open(file, &colorinfo_op);
 }
 
+static long colorinfo_proc_ioctl(struct file *file, unsigned int request, unsigned long arg)
+{
+	switch (request) {
+	case COLOR_IOC_REMAP:
+	{
+		struct color_remap_req req;
+		colormask_t colormask;
+		if (copy_from_user(&req, (void __user *) arg, sizeof(req)))
+			return -EFAULT;
+		if (copy_from_user(&colormask, (void __user *) req.user_mask_ptr, colormask_size()))
+			return -EFAULT;
+		if (colormask_first(&colormask) == NR_COLORS)
+			return -EINVAL;
+		if (req.num_pages <= 0)
+			return -EINVAL;
+		if (!node_online(req.nid))
+			return -EINVAL;
+		return color_remap(&req, &colormask);
+	}
+	// case COLOR_IOC_SWAP:
+	// {
+	// 	struct color_swap_req req;
+	// 	if (copy_from_user(&req, (void __user *) arg, sizeof(req)))
+	// 		return -EFAULT;
+	// 	if (req.num_pages < 0 || req.num_pages > COLOR_SWAP_MAX_NUM_PAGES)
+	// 		return -EINVAL;
+	// 	return color_swap(&req);
+	// }
+	default:
+		return -ENOTTY;
+	}
+}
+
 static const struct proc_ops colorinfo_proc_ops = {
 	.proc_open	= colorinfo_proc_open,
 	.proc_read	= seq_read,
 	.proc_lseek	= seq_lseek,
 	.proc_release	= seq_release,
+	.proc_ioctl	= colorinfo_proc_ioctl,
 };
 
 /*
@@ -236,7 +270,7 @@ static long color_ppool_proc_ioctl(struct file *file, unsigned int request, unsi
 			p->use_ppool = (request == PPOOL_IOC_ENABLE);
 			ret = 0;
 		} else {
-			ret = -EINVAL;
+			ret = -ESRCH;
 		}
 		rcu_read_unlock();
 		return ret;

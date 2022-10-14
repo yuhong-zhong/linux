@@ -80,8 +80,6 @@
 #include "shuffle.h"
 #include "page_reporting.h"
 
-#define GFP_COLOR ((GFP_HIGHUSER) & (~__GFP_RECLAIM))
-
 struct free_color_area {
 	struct list_head free_list[NR_PMEM_CHUNK];
 	unsigned long nr_free[NR_PMEM_CHUNK];
@@ -5357,9 +5355,10 @@ static inline bool prepare_alloc_pages(gfp_t gfp_mask, unsigned int order,
 /*
  * This is the 'heart' of the zoned buddy allocator.
  */
-struct page *
-__alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
-							nodemask_t *nodemask)
+inline struct page *
+___alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
+		nodemask_t *nodemask, int *preferred_color, colormask_t *colormask,
+		bool use_ppool)
 {
 	struct page *page;
 	unsigned int alloc_flags = ALLOC_WMARK_LOW;
@@ -5368,7 +5367,7 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
 
 	if ((gfp_mask & GFP_COLOR) == GFP_COLOR
 	    && order == COLOR_PAGE_ORDER
-	    && current->use_ppool) {
+	    && use_ppool) {
 		page = alloc_ppool_page();
 		if (page) {
 			goto out;
@@ -5379,20 +5378,20 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
 
 	if ((gfp_mask & GFP_COLOR) == GFP_COLOR
 	    && order == COLOR_PAGE_ORDER
-	    && colormask_weight(&current->colors_allowed) < NR_COLORS
-	    && colormask_weight(&current->colors_allowed) > 0) {
+	    && colormask_weight(colormask) < NR_COLORS
+	    && colormask_weight(colormask) > 0) {
 		/* assumption: one thread never trigger multiple page faults simultaneously */
 		page = alloc_color_page(nodemask ? nodemask : &node_states[N_MEMORY],
 		                        preferred_nid,
-					&current->colors_allowed,
-					current->preferred_color);
+					colormask,
+					*preferred_color);
 		if (page) {
-			int next_color = colormask_next(get_page_color(page), &current->colors_allowed);
+			int next_color = colormask_next(get_page_color(page), colormask);
 			if (next_color == NR_COLORS)
-				next_color = colormask_first(&current->colors_allowed);
+				next_color = colormask_first(colormask);
 			if (next_color == NR_COLORS)
 				next_color = 0;
-			current->preferred_color = next_color;
+			*preferred_color = next_color;
 			goto out;
 		} else {
 			trace_printk("alloc_color_page: failed to allocate a page, fall back to the normal path\n");
@@ -5451,6 +5450,15 @@ out:
 	trace_mm_page_alloc(page, order, alloc_mask, ac.migratetype);
 
 	return page;
+}
+
+struct page *
+__alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
+							nodemask_t *nodemask)
+{
+	return ___alloc_pages_nodemask(gfp_mask, order, preferred_nid,
+			nodemask, &current->preferred_color,
+			&current->colors_allowed, current->use_ppool);
 }
 EXPORT_SYMBOL(__alloc_pages_nodemask);
 
