@@ -236,6 +236,7 @@ void atomic_insert_free_color_page(struct page *page)
 	int chunk = get_page_chunk(page);
 	unsigned long flags;
 
+	WARN_ON(!PageColored(page));
 	spin_lock_irqsave(&color_area_arr[nid][color].lock, flags);
 	list_add_tail(&page->lru, &color_area_arr[nid][color].free_list[chunk]);
 	++color_area_arr[nid][color].nr_free[chunk];
@@ -263,8 +264,10 @@ static bool atomic_release_free_color_page(int nid, int color)
 	}
 	spin_unlock_irqrestore(&color_area_arr[nid][color].lock, flags);
 
-	if (page)
+	if (page) {
+		ClearPageColored(page);
 		__free_pages(page, COLOR_PAGE_ORDER);
+	}
 	return page != NULL;
 }
 
@@ -291,6 +294,7 @@ void rebalance_colormem(int nid, long nr_page)
 			                              COLOR_PAGE_ORDER, nid, &nodemask);
 			if (!page)
 				break;
+			SetPageColored(page);
 			if (color == get_page_color(page)) {
 				--nr_page_target;
 				credit = COLOR_ALLOC_MAX_ATTEMPT;
@@ -362,7 +366,7 @@ retry_color:
 	}
 out:
 	if (page)
-		SetPageColored(page);
+		WARN_ON(!PageColored(page));
 	if (page) {
 		int index = atomic_fetch_inc(&pfn_index);
 		if (index >= 0 && index < COLOR_NR_PFNS)
@@ -386,7 +390,7 @@ struct page *alloc_ppool_page(void)
 	}
 	spin_unlock_irqrestore(&private_color_pool.lock, flags);
 	if (page)
-		SetPagePpooled(page);
+		WARN_ON(!PagePpooled(page));
 	if (page) {
 		int index = atomic_fetch_inc(&pfn_index);
 		if (index >= 0 && index < COLOR_NR_PFNS)
@@ -400,7 +404,6 @@ void free_ppool_page(struct page *page)
 	unsigned long flags;
 
 	WARN_ON(!PagePpooled(page));
-	ClearPagePpooled(page);
 	prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0), 0);
 
 	spin_lock_irqsave(&private_color_pool.lock, flags);
@@ -436,6 +439,8 @@ resume:
 		page = list_first_entry(&private_color_pool.free_list, struct page, lru);
 		list_del_init(&page->lru);
 		--private_color_pool.nr_pages;
+		ClearPagePpooled(page);
+		SetPageColored(page);
 		atomic_insert_free_color_page(page);
 
 		if (need_resched()) {
@@ -453,6 +458,8 @@ resume:
 		page = atomic_get_free_color_page(nid, color);
 		if (page != NULL) {
 			retry = 0;
+			ClearPageColored(page);
+			SetPagePpooled(page);
 			list_add_tail(&page->lru, &private_color_pool.free_list);
 			++private_color_pool.nr_pages;
 		} else {
@@ -2057,7 +2064,6 @@ static void __free_pages_ok(struct page *page, unsigned int order,
 		return;
 	}
 	if (PageColored(page)) {
-		ClearPageColored(page);
 		prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0), 0);
 		atomic_insert_free_color_page(page);
 		return;
@@ -3872,7 +3878,6 @@ void free_unref_page(struct page *page, unsigned int order)
 		return;
 	}
 	if (PageColored(page)) {
-		ClearPageColored(page);
 		prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0), 0);
 		atomic_insert_free_color_page(page);
 		return;
