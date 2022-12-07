@@ -468,7 +468,7 @@ pmd_t maybe_pmd_mkwrite(pmd_t pmd, struct vm_area_struct *vma)
 }
 
 #ifdef CONFIG_MEMCG
-static inline struct deferred_split *get_deferred_split_queue(struct page *page)
+struct deferred_split *get_deferred_split_queue(struct page *page)
 {
 	struct mem_cgroup *memcg = compound_head(page)->mem_cgroup;
 	struct pglist_data *pgdat = NODE_DATA(page_to_nid(page));
@@ -479,7 +479,7 @@ static inline struct deferred_split *get_deferred_split_queue(struct page *page)
 		return &pgdat->deferred_split_queue;
 }
 #else
-static inline struct deferred_split *get_deferred_split_queue(struct page *page)
+struct deferred_split *get_deferred_split_queue(struct page *page)
 {
 	struct pglist_data *pgdat = NODE_DATA(page_to_nid(page));
 

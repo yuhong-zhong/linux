@@ -29,15 +29,14 @@ struct color_remap_req {
 	unsigned long __user *user_mask_ptr;
 };
 
-// #define COLOR_SWAP_MAX_NUM_PAGES COLOR_REMAP_MAX_NUM_PAGES
-// struct color_swap_req {
-// 	int pid;
-// 	int num_pages;
-// 	void __user *page_arr_1[COLOR_SWAP_MAX_NUM_PAGES];
-// 	void __user *page_arr_2[COLOR_SWAP_MAX_NUM_PAGES];
-// };
+struct color_swap_req {
+	int pid;
+	int num_pages;
+	void __user * __user *page_arr_1;
+	void __user * __user *page_arr_2;
+};
 
 #define COLOR_IOC_REMAP		_IOW('?', 0, struct color_remap_req *)
-// #define COLOR_IOC_SWAP		_IOW('?', 1, struct color_swap_req *)
+#define COLOR_IOC_SWAP		_IOW('?', 1, struct color_swap_req *)
 
 #endif /* _LINUX_PAGE_COLORING_H */

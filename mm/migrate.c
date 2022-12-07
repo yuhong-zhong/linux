@@ -2081,6 +2081,617 @@ put_mm:
 	return ret;
 }
 
+bool color_swap_should_skip_page(struct page *page)
+{
+	// Should be called after isolating the page from LRU
+	if (page_count(page) != page_mapcount(page) + 1) {
+		trace_printk("page_count: %d, page_mapcount: %d\n", page_count(page), page_mapcount(page));
+		return true;
+	}
+	if (!PageAnon(page)) {
+		trace_printk("!PageAnon\n");
+		return true;
+	}
+	if (PageHuge(page)) {
+		trace_printk("PageHuge\n");
+		return true;
+	}
+	if (PageLRU(page)) {
+		trace_printk("PageLRU\n");
+		return true;
+	}
+	if (PageHWPoison(page)) {
+		trace_printk("PageHWPoison\n");
+		return true;
+	}
+	if (PageKsm(page)) {
+		trace_printk("PageKsm\n");
+		return true;
+	}
+	if (page_is_devmap_managed(page)) {
+		trace_printk("page_is_devmap_managed\n");
+		return true;
+	}
+	if (is_zone_device_page(page)) {
+		trace_printk("is_zone_device_page\n");
+		return true;
+	}
+	return false;
+}
+
+struct color_swap_unmap_and_move_context {
+	struct page *newpage;
+	struct page *fake_newpage;
+
+	struct page *page;
+	bool page_was_mapped;
+	struct anon_vma *anon_vma;	
+};
+
+static int color_swap_unmap_and_move_th(
+	struct page *page, int force, int reason,
+	struct color_swap_unmap_and_move_context *ctx)
+{
+	/*
+	 * The purpose of this function is to finish the top half of
+	 * unmap_and_move while skipping the operations on newpage if
+	 * they are going to be performed by color_swap_unmap_and_move_th
+	 * on the other page. Changes that need to be made on newpgae
+	 * are cached in fake_newpage, which will be applied in
+	 * color_swap_do_swap.
+	 */
+
+	int rc;
+
+	// XXX unmap_and_move
+	ctx->page = page;
+	// ctx->newpage = NULL;
+	ctx->page_was_mapped = false;
+	ctx->anon_vma = NULL;
+
+	VM_BUG_ON_PAGE(!thp_migration_supported() && PageTransHuge(page), page);
+
+	if (page_count(page) == 1) {
+		/* page was freed from under us. So we are done. */
+		ClearPageActive(page);
+		ClearPageUnevictable(page);
+		if (unlikely(__PageMovable(page))) {
+			lock_page(page);
+			if (!PageMovable(page))
+				__ClearPageIsolated(page);
+			unlock_page(page);
+		}
+
+		/*
+		 * A page that has been migrated has all references
+		 * removed and will be freed. A page that has not been
+		 * migrated will have kept its references and be restored.
+		 */
+		list_del(&page->lru);
+
+		/*
+		 * Compaction can migrate also non-LRU pages which are
+		 * not accounted to NR_ISOLATED_*. They can be recognized
+		 * as __PageMovable
+		 */
+		if (likely(!__PageMovable(page)))
+			mod_node_page_state(page_pgdat(page), NR_ISOLATED_ANON +
+					page_is_file_lru(page), -thp_nr_pages(page));
+
+		VM_BUG_ON_PAGE(reason == MR_MEMORY_FAILURE, page);
+		put_page(page);
+
+		// XXX skip this page
+		return -EINVAL;
+	}
+
+	// ctx->newpage = get_new_page(page, private);
+	// VM_BUG_ON_PAGE(!ctx->newpage, page);
+
+	// XXX __unmap_and_move
+	if (!trylock_page(page)) {
+		if (!force) {
+			rc = -EAGAIN;
+			goto err;
+		}
+
+		/*
+		 * It's not safe for direct compaction to call lock_page.
+		 * For example, during page readahead pages are added locked
+		 * to the LRU. Later, when the IO completes the pages are
+		 * marked uptodate and unlocked. However, the queueing
+		 * could be merging multiple pages for one bio (e.g.
+		 * mpage_readahead). If an allocation happens for the
+		 * second or third page, the process can end up locking
+		 * the same page twice and deadlocking. Rather than
+		 * trying to be clever about what pages can be locked,
+		 * avoid the use of lock_page for direct compaction
+		 * altogether.
+		 */
+		if (current->flags & PF_MEMALLOC) {
+			rc = -EAGAIN;
+			goto err;
+		}
+		lock_page(page);
+	}
+
+	if (PageWriteback(page)) {
+		if (!force) {
+			rc = -EAGAIN;
+			goto err_unlock;
+		}
+		wait_on_page_writeback(page);
+	}
+
+	/*
+	 * By try_to_unmap(), page->mapcount goes down to 0 here. In this case,
+	 * we cannot notice that anon_vma is freed while we migrates a page.
+	 * This get_anon_vma() delays freeing anon_vma pointer until the end
+	 * of migration. File cache pages are no problem because of page_lock()
+	 * File Caches may use write_page() or lock_page() in migration, then,
+	 * just care Anon page here.
+	 *
+	 * Only page_get_anon_vma() understands the subtleties of
+	 * getting a hold on an anon_vma from outside one of its mms.
+	 * But if we cannot get anon_vma, then we won't need it anyway,
+	 * because that implies that the anon page is no longer mapped
+	 * (and cannot be remapped so long as we hold the page lock).
+	 */
+	if (PageAnon(page) && !PageKsm(page)) {
+		ctx->anon_vma = page_get_anon_vma(page);
+	} else {
+		// XXX do not support KSM and other page types
+		rc = -EINVAL;
+		goto err_unlock;
+	}
+
+	/*
+	 * Block others from accessing the new page when we get around to
+	 * establishing additional references. We are usually the only one
+	 * holding a reference to newpage at this point. We used to have a BUG
+	 * here if trylock_page(newpage) fails, but would like to allow for
+	 * cases where there might be a race with the previous use of newpage.
+	 * This is much like races on refcount of oldpage: just don't BUG().
+	 */
+	// if (unlikely(!trylock_page(ctx->newpage))) {
+	// 	rc = -EAGAIN;
+	// 	goto err_unlock;
+	// }
+
+	/*
+	 * Corner case handling:
+	 * 1. When a new swap-cache page is read into, it is added to the LRU
+	 * and treated as swapcache but it has no rmap yet.
+	 * Calling try_to_unmap() against a page->mapping==NULL page will
+	 * trigger a BUG.  So handle it here.
+	 * 2. An orphaned page (see truncate_complete_page) might have
+	 * fs-private metadata. The page can be picked up due to memory
+	 * offlining.  Everywhere else except page reclaim, the page is
+	 * invisible to the vm, so the page can not be migrated.  So try to
+	 * free the metadata, so the page can be freed.
+	 */
+	if (!page->mapping) {
+		// XXX do not support swap-cache page
+		rc = -EINVAL;
+		goto err_unlock;
+	} else if (page_mapped(page)) {
+		/* Establish migration ptes */
+		VM_BUG_ON_PAGE(PageAnon(page) && !PageKsm(page) && !ctx->anon_vma,
+			page);
+		try_to_unmap(page,
+			TTU_MIGRATION|TTU_IGNORE_MLOCK|TTU_IGNORE_ACCESS);
+		ctx->page_was_mapped = true;
+	}
+
+	if (page_mapped(page)) {
+		rc = -EAGAIN;
+		goto err_remove_migration_ptes;
+	}
+
+	// XXX move_to_new_page
+	VM_BUG_ON_PAGE(!PageLocked(page), page);
+	// VM_BUG_ON_PAGE(!PageLocked(ctx->newpage), ctx->newpage);
+	VM_BUG_ON_PAGE(page_mapping(page), page);
+
+	// XXX migrate_page
+	VM_BUG_ON_PAGE(PageWriteback(page), page);
+	rc = migrate_page_move_mapping(NULL, ctx->fake_newpage, page, 0);
+	VM_BUG_ON_PAGE(rc != MIGRATEPAGE_SUCCESS, page);
+
+	// XXX migrate_page_copy
+	rc = MIGRATEPAGE_SUCCESS;
+
+	// will be deleted by the caller if success
+	// list_del(&page->lru);
+
+	return rc;
+
+err_remove_migration_ptes:
+	// XXX __unmap_and_move
+	if (ctx->page_was_mapped)
+		remove_migration_ptes(page, page, false);
+// err_unlock_both:
+// 	unlock_page(ctx->newpage);
+err_unlock:
+	if (ctx->anon_vma)
+		put_anon_vma(ctx->anon_vma);
+	unlock_page(page);
+	VM_BUG_ON_PAGE(rc == MIGRATEPAGE_SUCCESS, page);
+err:
+	// XXX unmap_and_move
+	if (rc != -EAGAIN) {
+		/*
+		 * A page that has been migrated has all references
+		 * removed and will be freed. A page that has not been
+		 * migrated will have kept its references and be restored.
+		 */
+		list_del(&page->lru);
+
+		/*
+		 * Compaction can migrate also non-LRU pages which are
+		 * not accounted to NR_ISOLATED_*. They can be recognized
+		 * as __PageMovable
+		 */
+		if (likely(!__PageMovable(page)))
+			mod_node_page_state(page_pgdat(page), NR_ISOLATED_ANON +
+					page_is_file_lru(page), -thp_nr_pages(page));
+	}
+	VM_BUG_ON_PAGE(rc == MIGRATEPAGE_SUCCESS, page);
+	if (rc != -EAGAIN) {
+		if (likely(!__PageMovable(page))) {
+			putback_lru_page(page);
+			goto err_put_new;
+		}
+
+		lock_page(page);
+		if (PageMovable(page))
+			putback_movable_page(page);
+		else
+			__ClearPageIsolated(page);
+		unlock_page(page);
+		put_page(page);
+	}
+err_put_new:
+	// if (put_new_page)
+	// 	put_new_page(ctx->newpage, private);
+	// else
+	// 	put_page(ctx->newpage);
+	return rc;
+}
+
+static void color_swap_unmap_and_move_th_undo(
+	struct color_swap_unmap_and_move_context *ctx)
+{
+	if (ctx->page_was_mapped)
+		remove_migration_ptes(ctx->page, ctx->page, false);
+	if (ctx->anon_vma)
+		put_anon_vma(ctx->anon_vma);
+	unlock_page(ctx->page);
+}
+
+static void color_swap_do_swap(void *memcpy_buffer,
+	struct color_swap_unmap_and_move_context *ctx1,
+	struct color_swap_unmap_and_move_context *ctx2)
+{
+	/*
+	 * This function is supposed to perform the data copy between the two
+	 * pages and apply the cached changes from fake_newpage to newpage.
+	 * It also fakes put_page and get_new_page and duplicates the states
+	 * that are needed in unmap_and_move_bh in fake_newpage.
+	 */
+	int rc;
+	uint64_t copy_size;
+
+	// copy data
+	VM_BUG_ON(PageTransHuge(ctx1->page) != PageTransHuge(ctx2->page));
+	copy_size = PAGE_SIZE * (PageTransHuge(ctx1->page) ? thp_nr_pages(ctx1->page) : 1);
+	memcpy(memcpy_buffer, page_to_virt(ctx1->page), copy_size);
+	memcpy(page_to_virt(ctx1->page), page_to_virt(ctx2->page), copy_size);
+	memcpy(page_to_virt(ctx2->page), memcpy_buffer, copy_size);
+
+	// duplicate states
+	migrate_page_states(ctx1->fake_newpage, ctx1->page);
+	migrate_page_states(ctx2->fake_newpage, ctx2->page);
+
+	// unlock page (should be safe since the pages have been unmapped)
+	VM_BUG_ON_PAGE(page_count(ctx1->page) != 1, ctx1->page);
+	VM_BUG_ON_PAGE(page_count(ctx2->page) != 1, ctx2->page);
+	VM_BUG_ON_PAGE(page_mapped(ctx1->page), ctx1->page);
+	VM_BUG_ON_PAGE(page_mapped(ctx2->page), ctx2->page);
+	unlock_page(ctx1->page);
+	unlock_page(ctx2->page);
+
+	// fake put page
+	color_swap_fake_put_page(ctx1->page);
+	color_swap_fake_put_page(ctx2->page);
+
+	// fake get page
+	color_swap_fake_get_new_page(ctx1->page);
+	color_swap_fake_get_new_page(ctx2->page);
+
+	// lock page
+	VM_BUG_ON_PAGE(!trylock_page(ctx1->page), ctx1->page);
+	VM_BUG_ON_PAGE(!trylock_page(ctx2->page), ctx2->page);
+
+	// apply the changes made by unmap_and_move_th
+	rc = migrate_page_move_mapping(NULL, ctx1->newpage, ctx1->fake_newpage, 0);
+	VM_BUG_ON_PAGE(rc != MIGRATEPAGE_SUCCESS, ctx1->newpage);
+	rc = migrate_page_move_mapping(NULL, ctx2->newpage, ctx2->fake_newpage, 0);
+	VM_BUG_ON_PAGE(rc != MIGRATEPAGE_SUCCESS, ctx2->newpage);
+}
+
+static void color_swap_unmap_and_move_bh(int reason,
+	struct color_swap_unmap_and_move_context *ctx)
+{
+	// XXX migrate_page_copy
+	migrate_page_states(ctx->newpage, ctx->fake_newpage);
+
+	// XXX migrate_page
+	// XXX move_to_new_page
+	VM_BUG_ON_PAGE(!(PageAnon(ctx->newpage) && !PageKsm(ctx->newpage)), ctx->newpage);
+	VM_BUG_ON_PAGE(!PageMappingFlags(ctx->newpage), ctx->newpage);
+	VM_BUG_ON_PAGE(is_zone_device_page(ctx->newpage), ctx->newpage);
+
+	// XXX __unmap_and_move
+	if (ctx->page_was_mapped)
+		remove_migration_ptes(ctx->page, ctx->newpage, false);
+	unlock_page(ctx->newpage);
+	if (ctx->anon_vma)
+		put_anon_vma(ctx->anon_vma);
+	// unlock_page(ctx->page);
+	putback_lru_page(ctx->newpage);
+
+	// XXX unmap_and_move
+	set_page_owner_migrate_reason(ctx->newpage, reason);
+
+	// list_del(&ctx->page->lru);  (moved to color_swap_unmap_and_move_th)
+	mod_node_page_state(page_pgdat(ctx->newpage), NR_ISOLATED_ANON +
+		page_is_file_lru(ctx->newpage), -thp_nr_pages(ctx->newpage));
+	VM_BUG_ON_PAGE(reason == MR_MEMORY_FAILURE, ctx->page);
+	// put_page(ctx->page);
+}
+
+int color_swap(struct color_swap_req *req)
+{
+	nodemask_t task_nodes;
+	struct mm_struct *mm;
+	int ret, err;
+	int i;
+	int num_get_page_err = 0;
+	int num_add_page_err = 0;
+	int num_skipped_page = 0;
+	int num_migrate_err = 0;
+	LIST_HEAD(pagelist_1);
+	LIST_HEAD(pagelist_2);
+	LIST_HEAD(putback_list);
+	struct page *page_1, *page_1_next, *page_2, *page_2_next;
+	struct page *fake_newpage_1, *fake_newpage_2;
+	struct page *fake_thp_newpage_1, *fake_thp_newpage_2;
+	void *memcpy_buffer;
+	int retry = 1, thp_retry = 1;
+	int pass;
+
+	fake_newpage_1 = alloc_page(__GFP_HIGHMEM);
+	VM_BUG_ON(!fake_newpage_1);
+	fake_newpage_2 = alloc_page(__GFP_HIGHMEM);
+	VM_BUG_ON(!fake_newpage_2);
+	fake_thp_newpage_1 = alloc_pages(__GFP_HIGHMEM | __GFP_COMP, HPAGE_PMD_ORDER);
+	VM_BUG_ON(!fake_thp_newpage_1);
+	fake_thp_newpage_2 = alloc_pages(__GFP_HIGHMEM | __GFP_COMP, HPAGE_PMD_ORDER);
+	VM_BUG_ON(!fake_thp_newpage_2);
+
+	lock_page(fake_newpage_1);
+	lock_page(fake_newpage_2);
+	lock_page(fake_thp_newpage_1);
+	lock_page(fake_thp_newpage_2);
+
+	memcpy_buffer = page_to_virt(fake_thp_newpage_1);
+
+	// XXX: kernel_move_pages
+	mm = find_mm_struct(req->pid, &task_nodes);
+	if (IS_ERR(mm))
+		return PTR_ERR(mm);
+
+	// XXX: do_pages_move
+	migrate_prep();
+
+	for (i = 0; i < req->num_pages; ++i) {
+		void __user *raw_addr;
+		unsigned long addr;
+
+		// isolate and check the first page
+		err = get_user(raw_addr, req->page_arr_1 + i);
+		if (err) {
+			num_get_page_err++;
+			continue;
+		}
+		addr = (unsigned long) untagged_addr(raw_addr);
+		err = _add_page_for_migration(mm, addr, NUMA_NO_NODE,
+				&pagelist_1, true, true);
+		if (err <= 0) {
+			num_add_page_err++;
+			continue;
+		}
+		page_1 = list_last_entry(&pagelist_1, struct page, lru);;
+		if (color_swap_should_skip_page(page_1)) {
+			num_skipped_page++;
+			goto putback_first_page;
+		}
+
+		// isolate and check the second page
+		err = get_user(raw_addr, req->page_arr_2 + i);
+		if (err) {
+			num_get_page_err++;
+			goto putback_first_page;
+		}
+		addr = (unsigned long) untagged_addr(raw_addr);
+		err = _add_page_for_migration(mm, addr, NUMA_NO_NODE,
+				&pagelist_2, true, true);
+		if (err <= 0) {
+			num_add_page_err++;
+			goto putback_first_page;
+		}
+		page_2 = list_last_entry(&pagelist_2, struct page, lru);
+		if (color_swap_should_skip_page(page_2)) {
+			num_skipped_page++;
+			goto putback_second_page;
+		}
+		if (PageTransHuge(page_1) != PageTransHuge(page_2)) {
+			num_skipped_page++;
+			goto putback_second_page;
+		}
+		continue;
+
+putback_second_page:
+		list_del(&page_2->lru);
+		list_add_tail(&page_2->lru, &putback_list);
+putback_first_page:
+		list_del(&page_1->lru);
+		list_add_tail(&page_1->lru, &putback_list);
+	}
+	if (num_get_page_err > 0)
+		printk("color_swap: Failed to get the addresses of %d pages\n",
+				num_get_page_err);
+	if (num_add_page_err > 0)
+		printk("color_swap: Failed to isolate %d pages\n",
+				num_add_page_err);
+	if (num_skipped_page > 0)
+		printk("color_swap: Skipped %d pages\n",
+				num_skipped_page);
+
+	// XXX: move_pages_and_store_status
+	if (list_empty(&pagelist_1)) {
+		VM_BUG_ON(!list_empty(&pagelist_2));
+		ret = 0;
+		goto put_mm;
+	} else {
+		VM_BUG_ON(list_empty(&pagelist_2));
+	}
+
+	// XXX: do_move_pages_to_node
+	// XXX: migrate_pages
+	for (pass = 0; pass < 10 && (retry || thp_retry); pass++) {
+		retry = 0;
+		thp_retry = 0;		
+
+		page_1 = list_first_entry(&pagelist_1, struct page, lru);
+		page_1_next = list_next_entry(page_1, lru);
+
+		page_2 = list_first_entry(&pagelist_2, struct page, lru);
+		page_2_next = list_next_entry(page_2, lru);
+
+		while (!list_entry_is_head(page_1, &pagelist_1, lru)) {
+			struct color_swap_unmap_and_move_context ctx_1, ctx_2;
+
+			VM_BUG_ON(list_entry_is_head(page_2, &pagelist_2, lru));
+
+			ctx_1.newpage = page_2;
+			ctx_1.fake_newpage = PageTransHuge(page_1) ? fake_thp_newpage_1 : fake_newpage_1;
+			ctx_2.newpage = page_1;
+			ctx_2.fake_newpage = PageTransHuge(page_2) ? fake_thp_newpage_2 : fake_newpage_2;
+
+			// unmap_and_move_th on the first page
+			err = color_swap_unmap_and_move_th(page_1, pass > 2, MR_SYSCALL, &ctx_1);
+			switch (err) {
+			case -EAGAIN:
+				if (PageTransHuge(page_1)) {
+					thp_retry++;
+				} else {
+					retry++;
+				}
+				break;
+			case -EINVAL:
+				num_migrate_err++;
+				// the first page has already been put back
+				list_del(&page_2->lru);
+				list_add_tail(&page_2->lru, &putback_list);
+				break;
+			case MIGRATEPAGE_SUCCESS:
+				break;
+			default:
+				VM_BUG_ON(true);
+			}
+			if (err != MIGRATEPAGE_SUCCESS)
+				goto next_pair;
+
+			// unmap_and_move_th on the second page
+			err = color_swap_unmap_and_move_th(page_2, pass > 2, MR_SYSCALL, &ctx_2);
+			switch (err) {
+			case -EAGAIN:
+				if (PageTransHuge(page_2)) {
+					thp_retry++;
+				} else {
+					retry++;
+				}
+				// undo unmap_and_move_th on the first page
+				color_swap_unmap_and_move_th_undo(&ctx_1);
+				break;
+			case -EINVAL:
+				num_migrate_err++;
+				// the second page has already been put back
+				color_swap_unmap_and_move_th_undo(&ctx_1);
+				list_del(&page_1->lru);
+				list_add_tail(&page_1->lru, &putback_list);
+				break;
+			case MIGRATEPAGE_SUCCESS:
+				break;
+			default:
+				VM_BUG_ON(true);
+			}
+
+			// no failure over this point
+			color_swap_do_swap(memcpy_buffer, &ctx_1, &ctx_2);
+
+			color_swap_unmap_and_move_bh(MR_SYSCALL, &ctx_1);
+			color_swap_unmap_and_move_bh(MR_SYSCALL, &ctx_2);
+
+			list_del(&page_1->lru);
+			list_del(&page_2->lru);
+
+next_pair:
+			page_1 = page_1_next;
+			page_1_next = list_next_entry(page_1, lru);
+			page_2 = page_2_next;
+			page_2_next = list_next_entry(page_2, lru);
+		}
+	}
+
+	// XXX: do_move_pages_to_node
+	if (!list_empty(&putback_list)) {
+		putback_movable_pages(&putback_list);
+	}
+	if (!list_empty(&pagelist_1)) {
+		VM_BUG_ON(list_empty(&pagelist_2));
+		putback_movable_pages(&pagelist_1);
+		putback_movable_pages(&pagelist_2);
+	} else {
+		VM_BUG_ON(!list_empty(&pagelist_2));
+	}
+
+	if (num_migrate_err > 0) {
+		printk("color_swap: Failed to migrate %d pages\n",
+			num_migrate_err);
+	}
+	ret = 0;
+
+	// XXX: move_pages_and_store_status
+	// XXX: do_pages_move
+	// XXX: kernel_move_pages
+put_mm:
+	mmput(mm);
+
+	unlock_page(fake_thp_newpage_2);
+	unlock_page(fake_thp_newpage_1);
+	unlock_page(fake_newpage_2);
+	unlock_page(fake_newpage_1);
+
+	__free_pages(fake_thp_newpage_2, HPAGE_PMD_ORDER);
+	__free_pages(fake_thp_newpage_1, HPAGE_PMD_ORDER);
+	__free_page(fake_newpage_2);
+	__free_page(fake_newpage_1);
+	return ret;
+}
+
 #ifdef CONFIG_NUMA_BALANCING
 /*
  * Returns true if this is a safe migration target node for misplaced NUMA

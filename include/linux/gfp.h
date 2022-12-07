@@ -661,4 +661,7 @@ struct page *alloc_color_page(nodemask_t *nodemask, int preferred_nid,
                               colormask_t *colormask, int preferred_color);
 void atomic_reset_preferred_list(int nid, int color, bool lock);
 
+void color_swap_fake_put_page(struct page *page);
+void color_swap_fake_get_new_page(struct page *page);
+
 #endif /* __LINUX_GFP_H */

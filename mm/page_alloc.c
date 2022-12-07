@@ -1947,20 +1947,21 @@ static void __free_pages_ok(struct page *page, unsigned int order,
 		return;
 
 	migratetype = get_pfnblock_migratetype(page, pfn);
+	local_irq_save(flags);
 	__count_vm_events(PGFREE, 1 << order);
 	if (PagePpooled(page)) {
 		free_ppool_page(page);
-		return;
+		goto out;
 	}
 	if (PageColored(page)) {
 		prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0), 0);
 		atomic_insert_free_color_page(page);
-		return;
+		goto out;
 	}
 
-	local_irq_save(flags);
 	free_one_page(page_zone(page), page, pfn, order, migratetype,
 		      fpi_flags);
+out:
 	local_irq_restore(flags);
 }
 
@@ -9372,4 +9373,93 @@ bool take_page_off_buddy(struct page *page)
 	spin_unlock_irqrestore(&zone->lock, flags);
 	return ret;
 }
+
+void color_swap_fake_put_page(struct page *page)
+{
+	/*
+	 * The purpose of this function is to call put_page and capture the page
+	 * freed by put_page.
+	 */
+	unsigned long flags;
+
+	// XXX put_page
+	page = compound_head(page);
+
+	VM_BUG_ON_PAGE(page_is_devmap_managed(page), page);
+	VM_BUG_ON_PAGE(page_ref_count(page) != 1, page);
+
+	VM_BUG_ON_PAGE(!page_ref_dec_and_test(page), page);
+
+	// XXX __put_page
+	VM_BUG_ON_PAGE(is_zone_device_page(page), page);
+	if (PageCompound(page)) {
+		// XXX __put_compound_page
+		VM_BUG_ON_PAGE(PageHuge(page), page);
+
+		// XXX __page_cache_release
+		// page should have been already isolated from LRU
+		VM_BUG_ON_PAGE(PageLRU(page), page);
+		__ClearPageWaiters(page);
+
+		// XXX __put_compound_page
+		// XXX destroy_compound_page
+		VM_BUG_ON_PAGE(page[1].compound_dtor >= NR_COMPOUND_DTORS, page);
+
+		// XXX free_transhuge_page
+		{
+			struct deferred_split *ds_queue = get_deferred_split_queue(page);
+			unsigned long flags;
+
+			spin_lock_irqsave(&ds_queue->split_queue_lock, flags);
+			if (!list_empty(page_deferred_list(page))) {
+				ds_queue->split_queue_len--;
+				list_del(page_deferred_list(page));
+			}
+			spin_unlock_irqrestore(&ds_queue->split_queue_lock, flags);
+		}
+
+		// XXX free_compound_page
+		mem_cgroup_uncharge(page);
+
+		// XXX __free_pages_ok
+		VM_BUG_ON_PAGE(!free_pages_prepare(page, compound_order(page), true), page);
+		local_irq_save(flags);
+		__count_vm_events(PGFREE, 1 << HPAGE_PMD_ORDER);
+		prep_new_page(page, HPAGE_PMD_ORDER, __GFP_HIGHMEM | __GFP_COMP, 0);
+		local_irq_restore(flags);
+	} else {
+		// XXX __put_single_page
+
+		// XXX __page_cache_release
+		// page should have been already isolated from LRU
+		VM_BUG_ON_PAGE(PageLRU(page), page);
+		__ClearPageWaiters(page);
+
+		// XXX __put_single_page
+		mem_cgroup_uncharge(page);
+
+		// XXX free_unref_page
+		VM_BUG_ON_PAGE(!free_unref_page_prepare(page, page_to_pfn(page)), page);
+		local_irq_save(flags);
+
+		// XXX free_unref_page_commit
+		__count_vm_event(PGFREE);
+		prep_new_page(page, 0, __GFP_HIGHMEM, 0);
+
+		// XXX free_unref_page
+		local_irq_restore(flags);
+	}
+}
+
+void color_swap_fake_get_new_page(struct page *page)
+{
+	// XXX alloc_migration_target
+	
+	// XXX __alloc_pages_nodemask
+
+	// XXX alloc_migration_target
+	if (PageTransHuge(page))
+		prep_transhuge_page(page);
+}
+
 #endif

@@ -490,4 +490,6 @@ static inline unsigned long thp_size(struct page *page)
 	return PAGE_SIZE << thp_order(page);
 }
 
+struct deferred_split *get_deferred_split_queue(struct page *page);
+
 #endif /* _LINUX_HUGE_MM_H */
