@@ -27,6 +27,7 @@ struct color_remap_req {
 	int num_pages;
 	void __user * __user *page_arr;
 	unsigned long __user *user_mask_ptr;
+	int use_ppool;
 };
 
 // #define COLOR_SWAP_MAX_NUM_PAGES COLOR_REMAP_MAX_NUM_PAGES

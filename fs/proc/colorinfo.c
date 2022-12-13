@@ -119,8 +119,6 @@ static long colorinfo_proc_ioctl(struct file *file, unsigned int request, unsign
 			return -EFAULT;
 		if (copy_from_user(&colormask, (void __user *) req.user_mask_ptr, colormask_size()))
 			return -EFAULT;
-		if (colormask_first(&colormask) == NR_COLORS)
-			return -EINVAL;
 		if (req.num_pages <= 0)
 			return -EINVAL;
 		if (!node_online(req.nid))
