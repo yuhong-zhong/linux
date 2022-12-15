@@ -660,5 +660,6 @@ struct page *atomic_get_free_color_page(int nid, int color);
 struct page *alloc_color_page(nodemask_t *nodemask, int preferred_nid,
                               colormask_t *colormask, int preferred_color);
 void atomic_reset_preferred_list(int nid, int color, bool lock);
+struct page *get_captured_page(void);
 
 #endif /* __LINUX_GFP_H */

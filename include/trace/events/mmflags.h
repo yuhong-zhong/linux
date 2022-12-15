@@ -108,7 +108,8 @@
 	{1UL << PG_swapbacked,		"swapbacked"	},		\
 	{1UL << PG_unevictable,		"unevictable"	},		\
 	{1UL << PG_colored,		"colored"	},		\
-	{1UL << PG_ppooled,		"ppooled"	}		\
+	{1UL << PG_ppooled,		"ppooled"	},		\
+	{1UL << PG_capture,		"capture"	}		\
 IF_HAVE_PG_MLOCK(PG_mlocked,		"mlocked"	)		\
 IF_HAVE_PG_UNCACHED(PG_uncached,	"uncached"	)		\
 IF_HAVE_PG_HWPOISON(PG_hwpoison,	"hwpoison"	)		\

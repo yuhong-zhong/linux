@@ -99,6 +99,9 @@ struct private_color_pool {
 	spinlock_t lock;
 } private_color_pool;
 
+struct page *captured_page;
+spinlock_t page_capture_lock;
+
 static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags,
 							unsigned int alloc_flags);
 
@@ -481,6 +484,42 @@ unlock:
 	spin_unlock_irqrestore(&private_color_pool.lock, flags);
 }
 
+bool try_capture_page(struct page *page)
+{
+	unsigned long flags;
+	bool success = false;
+
+	WARN_ON(!PageColored(page) && !PagePpooled(page));
+	WARN_ON(!PageCapture(page));
+	ClearPageCapture(page);
+
+	spin_lock_irqsave(&page_capture_lock, flags);
+	if (captured_page != NULL) {
+		WARN_ON(true);
+		goto unlock;
+	}
+	prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0), 0);
+	captured_page = page;
+	success = true;
+unlock:
+	spin_unlock_irqrestore(&page_capture_lock, flags);
+	return success;
+}
+
+struct page *get_captured_page()
+{
+	unsigned long flags;
+	struct page *page;
+
+	spin_lock_irqsave(&page_capture_lock, flags);
+	page = captured_page;
+	captured_page = NULL;
+	spin_unlock_irqrestore(&page_capture_lock, flags);
+
+	WARN_ON(page && !PageColored(page) && !PagePpooled(page));
+	return page;
+}
+
 void __init colormem_init()
 {
 	int nid, color, chunk;
@@ -500,6 +539,9 @@ void __init colormem_init()
 	INIT_LIST_HEAD(&private_color_pool.free_list);
 	private_color_pool.nr_pages = 0;
 	spin_lock_init(&private_color_pool.lock);
+
+	captured_page = NULL;
+	spin_lock_init(&page_capture_lock);
 
 	for_each_online_node(nid)
 		printk("NUMA %d - node_start_pfn: %ld\n", nid, NODE_DATA(nid)->node_start_pfn);
@@ -1947,20 +1989,25 @@ static void __free_pages_ok(struct page *page, unsigned int order,
 		return;
 
 	migratetype = get_pfnblock_migratetype(page, pfn);
+	local_irq_save(flags);
 	__count_vm_events(PGFREE, 1 << order);
+	if (PageCapture(page)) {
+		if (try_capture_page(page))
+			goto out;
+	}
 	if (PagePpooled(page)) {
 		free_ppool_page(page);
-		return;
+		goto out;
 	}
 	if (PageColored(page)) {
 		prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0), 0);
 		atomic_insert_free_color_page(page);
-		return;
+		goto out;
 	}
 
-	local_irq_save(flags);
 	free_one_page(page_zone(page), page, pfn, order, migratetype,
 		      fpi_flags);
+out:
 	local_irq_restore(flags);
 }
 
@@ -3608,6 +3655,10 @@ static void free_unref_page_commit(struct page *page, unsigned long pfn)
 	migratetype = get_pcppage_migratetype(page);
 	__count_vm_event(PGFREE);
 
+	if (PageCapture(page)) {
+		if (try_capture_page(page))
+			return;
+	}
 	if (PagePpooled(page)) {
 		free_ppool_page(page);
 		return;

@@ -11,7 +11,7 @@
 #include <linux/bitmap.h>
 #include <uapi/linux/page_coloring.h>
 
-#define COLOR_THP  // Enable coloring for Transparent Huge Page
+// #define COLOR_THP  // Enable coloring for Transparent Huge Page
 
 #ifdef COLOR_THP
 #define COLOR_PAGE_SHIFT HPAGE_PMD_SHIFT
@@ -116,7 +116,7 @@ int get_user_color_mask(unsigned long __user *user_mask_ptr, unsigned len, struc
 
 int color_remap(struct color_remap_req *req, colormask_t *colormask);
 
-// int color_swap(struct color_swap_req *req);
+int color_swap(struct color_swap_req *req);
 
 struct colorinfo {
 	__u32 nid;
