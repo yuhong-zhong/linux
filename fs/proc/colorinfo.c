@@ -125,15 +125,15 @@ static long colorinfo_proc_ioctl(struct file *file, unsigned int request, unsign
 			return -EINVAL;
 		return color_remap(&req, &colormask);
 	}
-	// case COLOR_IOC_SWAP:
-	// {
-	// 	struct color_swap_req req;
-	// 	if (copy_from_user(&req, (void __user *) arg, sizeof(req)))
-	// 		return -EFAULT;
-	// 	if (req.num_pages < 0 || req.num_pages > COLOR_SWAP_MAX_NUM_PAGES)
-	// 		return -EINVAL;
-	// 	return color_swap(&req);
-	// }
+	case COLOR_IOC_SWAP:
+	{
+		struct color_swap_req req;
+		if (copy_from_user(&req, (void __user *) arg, sizeof(req)))
+			return -EFAULT;
+		if (req.num_pages <= 0)
+			return -EINVAL;
+		return color_swap(&req);
+	}
 	default:
 		return -ENOTTY;
 	}
