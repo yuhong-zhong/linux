@@ -5428,7 +5428,7 @@ ___alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
 		if (page) {
 			goto out;
 		} else {
-			trace_printk("alloc_ppool_page: failed to allocate a page, fall back to the normal path\n");
+			printk_once("alloc_ppool_page: failed to allocate a page, fall back to the normal path\n");
 		}
 	}
 
@@ -5450,7 +5450,7 @@ ___alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
 			*preferred_color = next_color;
 			goto out;
 		} else {
-			trace_printk("alloc_color_page: failed to allocate a page, fall back to the normal path\n");
+			printk_once("alloc_color_page: failed to allocate a page, fall back to the normal path\n");
 		}
 	}
 
