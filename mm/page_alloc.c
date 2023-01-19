@@ -5851,7 +5851,7 @@ inline struct page *___alloc_pages(gfp_t gfp, unsigned int order, int preferred_
 		if (page) {
 			goto out;
 		} else {
-			trace_printk("alloc_ppool_page: failed to allocate a page, fall back to the normal path\n");
+			printk_once("alloc_ppool_page: failed to allocate a page, fall back to the normal path\n");
 		}
 	}
 
@@ -5873,7 +5873,7 @@ inline struct page *___alloc_pages(gfp_t gfp, unsigned int order, int preferred_
 			*preferred_color = next_color;
 			goto out;
 		} else {
-			trace_printk("alloc_color_page: failed to allocate a page, fall back to the normal path\n");
+			printk_once("alloc_color_page: failed to allocate a page, fall back to the normal path\n");
 		}
 	}
 
