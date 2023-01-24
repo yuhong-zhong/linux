@@ -2587,19 +2587,6 @@ putback_first_page:
 	}
 	WARN_ON(!list_empty(&page_list));
 
-	// if (num_get_page_err > 0)
-	// 	printk("color_swap: Failed to get the addresses of %d pages\n",
-	// 			num_get_page_err);
-	// if (num_add_page_err > 0)
-	// 	printk("color_swap: Failed to isolate %d pages\n",
-	// 			num_add_page_err);
-	// if (num_skipped_page > 0)
-	// 	printk("color_swap: Skipped %d pages\n",
-	// 			num_skipped_page);
-	// if (num_malloc_err > 0)
-	// 	printk("color_swap: %d malloc errors\n",
-	// 			num_malloc_err);
-
 	if (!list_empty(&putback_list))
 		putback_movable_pages(&putback_list);
 
@@ -2685,10 +2672,6 @@ putback_first_page:
 	if (!list_empty(&putback_list))
 		putback_movable_pages(&putback_list);
 
-	// if (num_migrate_err > 0)
-	// 	printk("color_swap: Failed to migrate %d pages\n",
-	// 		num_migrate_err);
-
 	ret = 0;
 
 	if (!swapwrite)
@@ -2698,6 +2681,14 @@ putback_first_page:
 	// XXX: do_pages_move
 	// XXX: kernel_move_pages
 put_mm:
+	req->num_get_page_err = num_get_page_err;
+	req->num_add_page_err = num_add_page_err;
+	req->num_skipped_page = num_skipped_page;
+	req->num_malloc_err = num_malloc_err;
+	req->num_migrate_err = num_migrate_err;
+	req->num_succeeded = nr_succeeded;
+	req->num_thp_succeeded = nr_thp_succeeded;
+
 	mmput(mm);
 	return ret;
 }
