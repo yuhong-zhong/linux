@@ -1857,8 +1857,8 @@ int intel_pmu_save_and_restart_reload(struct perf_event *event, int count)
 	local64_set(&hwc->period_left, -new);
 
 	if (new >= 0) {
-		trace_printk("PEBS workaround triggered -- index: %d, count: %d, new: %ld, old: %ld, event->count: %ld;\n",
-		             hwc->idx, count, new, old, event->count);
+		// trace_printk("PEBS workaround triggered -- index: %d, count: %d, new: %ld, old: %ld, event->count: %ld;\n",
+		//              hwc->idx, count, new, old, event->count);
 		x86_perf_event_set_period(event);
 	} else {
 		perf_event_update_userpage(event);

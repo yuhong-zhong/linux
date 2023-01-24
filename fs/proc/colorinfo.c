@@ -128,11 +128,16 @@ static long colorinfo_proc_ioctl(struct file *file, unsigned int request, unsign
 	case COLOR_IOC_SWAP:
 	{
 		struct color_swap_req req;
+		int ret;
+
 		if (copy_from_user(&req, (void __user *) arg, sizeof(req)))
 			return -EFAULT;
 		if (req.num_pages <= 0)
 			return -EINVAL;
-		return color_swap(&req);
+
+		ret = color_swap(&req);
+		copy_to_user((void __user *) arg, &req, sizeof(req));
+		return ret;
 	}
 	default:
 		return -ENOTTY;

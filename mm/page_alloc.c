@@ -5902,7 +5902,7 @@ inline struct page *___alloc_pages(gfp_t gfp, unsigned int order, int preferred_
 		if (page) {
 			goto out;
 		} else {
-			printk_once("alloc_ppool_page: failed to allocate a page, fall back to the normal path\n");
+			trace_printk("alloc_ppool_page: failed to allocate a page, fall back to the normal path\n");
 		}
 	}
 
