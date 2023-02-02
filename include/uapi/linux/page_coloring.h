@@ -28,6 +28,10 @@ struct color_remap_req {
 	void __user * __user *page_arr;
 	unsigned long __user *user_mask_ptr;
 	int use_ppool;
+
+	int num_get_page_err;
+	int num_add_page_err;
+	int num_migrate_err;
 };
 
 struct color_swap_req {
