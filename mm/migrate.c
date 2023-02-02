@@ -2688,6 +2688,356 @@ put_mm:
 	return ret;
 }
 
+enum color_fake_remap_state {
+	CF_ISOLATED,
+	CF_MOVED_TO_TMP,
+	CF_ERROR_TO_HANDLE,
+	CF_TERMINATE,
+};
+
+struct color_fake_remap_ctx {
+	int state;
+	struct page *page_1;
+	struct page *page_tmp;
+	struct list_head list;
+};
+
+int do_color_fake_remap(struct color_fake_remap_ctx *ctx, int pass, struct list_head *putback_list) {
+	int rc;
+	bool retry_later = false;
+
+	WARN_ON(!ctx || ctx->state == CF_TERMINATE);
+	while (ctx->state != CF_TERMINATE && !retry_later) {
+		switch (ctx->state) {
+		case CF_ISOLATED:
+		{
+			struct migration_target_control mtc = {
+				.nid = NUMA_NO_NODE,
+				.gfp_mask = GFP_HIGHUSER_MOVABLE,
+			};
+			struct page *captured_page = NULL;
+
+			/*
+			 * Move page_1 to page_tmp.
+			 *
+			 * Post conditions on success:
+			 * - page_1 is captured as captured_page (page_1 is referenced but not mapped)
+			 * - page_tmp has not been put back (page_tmp is referenced, mapped, and isolated)
+			 *
+			 * Post conditions on -EINVAL:
+			 * - page_1 is put back, no page should be captured
+			 *   (page_1 is not referenced by color_fake_remap)
+			 * - page_tmp is NULL (page_tmp is never allocate or has been freed,
+			 *   not referenced by color_fake_remap)
+			 *
+			 * Post conditions on -EAGAIN / -ENOMEM:
+			 * - page_1 is referenced, mapped, and isolated (nothing should be captured)
+			 * - page_tmp is NULL (page_tmp is never allocate or has been freed,
+			 *   not referenced by color_fake_remap)
+			 */
+			WARN_ON(PageHuge(ctx->page_1));
+			rc = unmap_and_move(alloc_migration_target, NULL,
+					color_swap_put_page_and_capture, (unsigned long) &mtc,
+					(unsigned long) &captured_page,
+					ctx->page_1, pass > 2, MIGRATE_SYNC, MR_SYSCALL, false,
+					&ctx->page_tmp, false, true);
+			switch (rc) {
+			case MIGRATEPAGE_SUCCESS:
+				if (!captured_page) {
+					// Failed to capture
+					rc = -EINVAL;
+					ctx->state = CF_ERROR_TO_HANDLE;
+					ctx->page_1 = NULL;
+					break;
+				}
+				WARN_ON(captured_page != ctx->page_1);
+				WARN_ON(page_count(ctx->page_1) != 1);
+				WARN_ON(ctx->page_tmp == NULL);
+				ctx->state = CF_MOVED_TO_TMP;
+				break;
+			case -EAGAIN:
+				WARN_ON(captured_page != NULL);
+				WARN_ON(ctx->page_tmp != NULL);
+				retry_later = true;
+				break;
+			case -EINVAL:
+			default:
+				ctx->page_1 = NULL;
+				// fallthrough
+			case -ENOMEM:
+				WARN_ON(captured_page != NULL);
+				WARN_ON(ctx->page_tmp != NULL);
+				ctx->state = CF_ERROR_TO_HANDLE;
+				break;
+			}
+			break;
+		}
+		case CF_MOVED_TO_TMP:
+		{
+			/*
+			 * Move page_tmp to page_1.
+			 *
+			 * Post conditions on success:
+			 * - page_tmp is not referenced (page_tmp is freed)
+			 * - page_1 is not referenced (page_1 is mapped and not isolated)
+			 *
+			 * Post conditions on -EINVAL:
+			 * - page_tmp is put back (page_tmp is not referenced by color_fake_remap)
+			 * - page_1 is referenced but not mapped
+			 *
+			 * Post conditions on -EAGAIN:
+			 * - page_tmp is referenced, mapped, and isolated (nothing should be captured)
+			 * - page_1 is referenced but not mapped
+			 */
+			WARN_ON(PageHuge(ctx->page_tmp));
+			rc = unmap_and_move(color_swap_alloc_given_page, color_swap_put_given_page,
+					NULL, (unsigned long) ctx->page_1, (unsigned long) NULL,
+					ctx->page_tmp, pass > 2, MIGRATE_SYNC, MR_SYSCALL, true,
+					NULL, false, true);
+			switch (rc) {
+			case MIGRATEPAGE_SUCCESS:
+				ctx->state = CF_TERMINATE;
+				break;
+			case -EAGAIN:
+				WARN_ON(page_count(ctx->page_1) != 1);
+				retry_later = true;
+				break;
+			case -EINVAL:
+			default:
+				WARN_ON(rc == -ENOMEM);
+				WARN_ON(page_count(ctx->page_1) != 1);
+				ctx->state = CF_ERROR_TO_HANDLE;
+				ctx->page_tmp = NULL;
+				// release previously captured page
+				put_page(ctx->page_1);
+				ctx->page_1 = NULL;
+				break;
+			}
+			break;
+		}
+		case CF_ERROR_TO_HANDLE:
+		{
+			if (ctx->page_1) {
+				list_add_tail(&ctx->page_1->lru, putback_list);
+			}
+			if (ctx->page_tmp) {
+				list_add_tail(&ctx->page_tmp->lru, putback_list);
+			}
+			ctx->state = CF_TERMINATE;
+			break;
+		}
+		default:
+			WARN_ON(true);
+		}
+	}
+	WARN_ON(ctx->state == CF_TERMINATE && retry_later);
+	if (ctx->state == CF_TERMINATE) {
+		list_del(&ctx->list);
+		kfree(ctx);
+	}
+	return rc;
+}
+
+void abort_color_fake_remap(struct color_fake_remap_ctx *ctx, struct list_head *putback_list) {
+	switch (ctx->state) {
+	case CF_ISOLATED:
+		list_add_tail(&ctx->page_1->lru, putback_list);
+		break;
+	case CF_MOVED_TO_TMP:
+		put_page(ctx->page_1);
+		list_add_tail(&ctx->page_tmp->lru, putback_list);
+		break;
+	default:
+		WARN_ON(true);
+	}
+	list_del(&ctx->list);
+	kfree(ctx);
+}
+
+int color_fake_remap(struct color_fake_remap_req *req)
+{
+	nodemask_t task_nodes;
+	struct mm_struct *mm;
+	int ret, err;
+	int i;
+	int num_get_page_err = 0;
+	int num_add_page_err = 0;
+	int num_skipped_page = 0;
+	int num_malloc_err = 0;
+	int num_migrate_err = 0;
+	LIST_HEAD(page_list);
+	LIST_HEAD(ctx_list);
+	LIST_HEAD(putback_list);
+	struct color_fake_remap_ctx *ctx, *ctx2;
+
+	int pass;
+	int retry = 1;
+	int thp_retry = 1;
+	int nr_failed = 0;
+	int nr_succeeded = 0;
+	int nr_thp_succeeded = 0;
+	int nr_thp_failed = 0;
+	int nr_thp_split = 0;
+	bool is_thp = false;
+	int swapwrite = current->flags & PF_SWAPWRITE;
+	int nr_subpages;
+
+	// XXX: kernel_move_pages
+	mm = find_mm_struct(req->pid, &task_nodes);
+	if (IS_ERR(mm))
+		return PTR_ERR(mm);
+
+	// XXX: do_pages_move
+	migrate_prep();
+
+	for (i = 0; i < req->num_pages; ++i) {
+		void __user *raw_addr;
+		unsigned long addr;
+		struct color_fake_remap_ctx *ctx;
+		struct page *page_1;
+
+		// isolate and check the page
+		err = get_user(raw_addr, req->page_arr + i);
+		if (err) {
+			num_get_page_err++;
+			continue;
+		}
+		addr = (unsigned long) untagged_addr(raw_addr);
+		err = _add_page_for_migration(mm, addr, NUMA_NO_NODE,
+				&page_list, true, true);
+		if (err <= 0) {
+			num_add_page_err++;
+			continue;
+		}
+		page_1 = list_last_entry(&page_list, struct page, lru);
+		list_del(&page_1->lru);
+		if (color_swap_should_skip_page(page_1)) {
+			num_skipped_page++;
+			goto putback_page;
+		}
+
+		// Make a ctx
+		ctx = kmalloc(sizeof(*ctx), GFP_KERNEL);
+		if (!ctx) {
+			num_malloc_err++;
+			goto putback_page;
+		}
+		ctx->state = CF_ISOLATED;
+		ctx->page_1 = page_1;
+		ctx->page_tmp = NULL;
+		INIT_LIST_HEAD(&ctx->list);
+		list_add_tail(&ctx->list, &ctx_list);
+		continue;
+
+putback_page:
+		list_add_tail(&page_1->lru, &putback_list);
+	}
+	WARN_ON(!list_empty(&page_list));
+
+	if (!list_empty(&putback_list))
+		putback_movable_pages(&putback_list);
+
+	// XXX: move_pages_and_store_status
+	if (list_empty(&ctx_list)) {
+		ret = 0;
+		goto put_mm;
+	}
+
+	// XXX: do_move_pages_to_node
+	// XXX: migrate_pages
+
+	if (!swapwrite)
+		current->flags |= PF_SWAPWRITE;
+
+	for (pass = 0; pass < 10 && (retry || thp_retry); pass++) {
+		retry = 0;
+		thp_retry = 0;
+
+		list_for_each_entry_safe(ctx, ctx2, &ctx_list, list) {
+			/*
+			 * THP statistics is based on the source huge page.
+			 * Capture required information that might get lost
+			 * during migration.
+			 */
+			struct page *sample_page = ctx->page_1;
+			if (!sample_page)
+				sample_page = ctx->page_tmp;
+			WARN_ON(!sample_page);
+			is_thp = PageTransHuge(sample_page) && !PageHuge(sample_page);
+			nr_subpages = thp_nr_pages(sample_page);
+			cond_resched();
+
+			err = do_color_fake_remap(ctx, pass, &putback_list);
+			switch (err) {
+			case -EAGAIN:
+				if (is_thp) {
+					thp_retry++;
+				} else {
+					retry++;
+				}
+				break;
+			case MIGRATEPAGE_SUCCESS:
+				if (is_thp) {
+					nr_thp_succeeded++;
+					nr_succeeded += nr_subpages;
+				} else {
+					nr_succeeded++;
+				}
+				break;
+			default:
+				if (is_thp) {
+					nr_thp_failed++;
+					nr_failed += nr_subpages;
+				} else {
+					nr_failed++;
+				}
+				num_migrate_err++;
+				break;
+			}
+		}
+	}
+
+	list_for_each_entry_safe(ctx, ctx2, &ctx_list, list) {
+		abort_color_fake_remap(ctx, &putback_list);
+		num_migrate_err++;
+	}
+	nr_failed += retry + thp_retry;
+	nr_thp_failed += thp_retry;
+
+	count_vm_events(PGMIGRATE_SUCCESS, nr_succeeded);
+	count_vm_events(PGMIGRATE_FAIL, nr_failed);
+	count_vm_events(THP_MIGRATION_SUCCESS, nr_thp_succeeded);
+	count_vm_events(THP_MIGRATION_FAIL, nr_thp_failed);
+	count_vm_events(THP_MIGRATION_SPLIT, nr_thp_split);
+
+	if (!swapwrite)
+		current->flags &= ~PF_SWAPWRITE;
+
+	// XXX: do_move_pages_to_node
+	if (!list_empty(&putback_list))
+		putback_movable_pages(&putback_list);
+
+	ret = 0;
+
+	if (!swapwrite)
+		current->flags &= ~PF_SWAPWRITE;
+
+	// XXX: move_pages_and_store_status
+	// XXX: do_pages_move
+	// XXX: kernel_move_pages
+put_mm:
+	req->num_get_page_err = num_get_page_err;
+	req->num_add_page_err = num_add_page_err;
+	req->num_skipped_page = num_skipped_page;
+	req->num_malloc_err = num_malloc_err;
+	req->num_migrate_err = num_migrate_err;
+	req->num_succeeded = nr_succeeded;
+	req->num_thp_succeeded = nr_thp_succeeded;
+
+	mmput(mm);
+	return ret;
+}
+
 #ifdef CONFIG_NUMA_BALANCING
 /*
  * Returns true if this is a safe migration target node for misplaced NUMA
