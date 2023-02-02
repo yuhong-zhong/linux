@@ -115,6 +115,8 @@ static long colorinfo_proc_ioctl(struct file *file, unsigned int request, unsign
 	{
 		struct color_remap_req req;
 		colormask_t colormask;
+		int ret;
+
 		if (copy_from_user(&req, (void __user *) arg, sizeof(req)))
 			return -EFAULT;
 		if (copy_from_user(&colormask, (void __user *) req.user_mask_ptr, colormask_size()))
@@ -123,7 +125,10 @@ static long colorinfo_proc_ioctl(struct file *file, unsigned int request, unsign
 			return -EINVAL;
 		if (!node_online(req.nid))
 			return -EINVAL;
-		return color_remap(&req, &colormask);
+
+		ret = color_remap(&req, &colormask);
+		copy_to_user((void __user *) arg, &req, sizeof(req));
+		return ret;
 	}
 	case COLOR_IOC_SWAP:
 	{

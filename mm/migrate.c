@@ -2137,12 +2137,6 @@ int color_remap(struct color_remap_req *req, colormask_t *colormask)
 		if (err <= 0)
 			num_add_page_err++;
 	}
-	if (num_get_page_err > 0)
-		printk("color_remap: Failed to get the addresses of %d pages\n",
-				num_get_page_err);
-	if (num_add_page_err > 0)
-		printk("color_remap: Failed to isolate %d pages\n",
-				num_add_page_err);
 
 	// XXX: move_pages_and_store_status
 	if (list_empty(&pagelist)) {
@@ -2154,17 +2148,18 @@ int color_remap(struct color_remap_req *req, colormask_t *colormask)
 	num_migrate_err = migrate_pages(&pagelist, color_remap_alloc,
 			NULL, (unsigned long) &ctrl, MIGRATE_SYNC,
 			MR_SYSCALL);
-	if (num_migrate_err > 0) {
-		printk("color_remap: Failed to migrate %d pages\n",
-			num_migrate_err);
+	if (num_migrate_err > 0)
 		putback_movable_pages(&pagelist);
-	}
 	ret = 0;
 
 	// XXX: move_pages_and_store_status
 	// XXX: do_pages_move
 	// XXX: kernel_move_pages
 put_mm:
+	req->num_get_page_err = num_get_page_err;
+	req->num_add_page_err = num_add_page_err;
+	req->num_migrate_err = num_migrate_err;
+
 	mmput(mm);
 	return ret;
 }
