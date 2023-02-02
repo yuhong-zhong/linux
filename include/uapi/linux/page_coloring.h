@@ -49,7 +49,22 @@ struct color_swap_req {
 	int num_thp_succeeded;
 };
 
+struct color_fake_remap_req {
+	int pid;
+	int num_pages;
+	void __user * __user *page_arr;
+
+	int num_get_page_err;
+	int num_add_page_err;
+	int num_skipped_page;
+	int num_malloc_err;
+	int num_migrate_err;
+	int num_succeeded;
+	int num_thp_succeeded;
+};
+
 #define COLOR_IOC_REMAP		_IOW('?', 0, struct color_remap_req *)
 #define COLOR_IOC_SWAP		_IOW('?', 1, struct color_swap_req *)
+#define COLOR_IOC_FAKE_REMAP	_IOW('?', 2, struct color_fake_remap_req *)
 
 #endif /* _LINUX_PAGE_COLORING_H */

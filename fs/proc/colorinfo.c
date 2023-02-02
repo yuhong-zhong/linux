@@ -144,6 +144,20 @@ static long colorinfo_proc_ioctl(struct file *file, unsigned int request, unsign
 		copy_to_user((void __user *) arg, &req, sizeof(req));
 		return ret;
 	}
+	case COLOR_IOC_FAKE_REMAP:
+	{
+		struct color_fake_remap_req req;
+		int ret;
+
+		if (copy_from_user(&req, (void __user *) arg, sizeof(req)))
+			return -EFAULT;
+		if (req.num_pages <= 0)
+			return -EINVAL;
+
+		ret = color_fake_remap(&req);
+		copy_to_user((void __user *) arg, &req, sizeof(req));
+		return ret;
+	}
 	default:
 		return -ENOTTY;
 	}

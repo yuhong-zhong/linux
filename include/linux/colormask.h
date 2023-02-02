@@ -118,6 +118,8 @@ int color_remap(struct color_remap_req *req, colormask_t *colormask);
 
 int color_swap(struct color_swap_req *req);
 
+int color_fake_remap(struct color_fake_remap_req *req);
+
 struct colorinfo {
 	__u32 nid;
 	__u32 color;
