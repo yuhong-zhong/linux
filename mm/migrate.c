@@ -2047,7 +2047,7 @@ int color_remap(struct color_remap_req *req, colormask_t *colormask)
 	int num_add_page_err = 0;
 	struct color_remap_control ctrl = {
 		.nid = req->nid,
-		.preferred_color = colormask_first(colormask),
+		.preferred_color = req->preferred_color,
 		.colormask = colormask,
 		.use_ppool = req->use_ppool != 0,
 	};
@@ -2096,6 +2096,8 @@ int color_remap(struct color_remap_req *req, colormask_t *colormask)
 	// XXX: do_pages_move
 	// XXX: kernel_move_pages
 put_mm:
+	req->preferred_color = ctrl.preferred_color;
+
 	req->num_get_page_err = num_get_page_err;
 	req->num_add_page_err = num_add_page_err;
 	req->num_migrate_err = num_migrate_err;
