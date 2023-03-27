@@ -27,6 +27,7 @@ struct color_remap_req {
 	int num_pages;
 	void __user * __user *page_arr;
 	unsigned long __user *user_mask_ptr;
+	int preferred_color;
 	int use_ppool;
 
 	int num_get_page_err;
