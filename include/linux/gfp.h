@@ -511,13 +511,13 @@ struct page *alloc_color_page(nodemask_t *nodemask, int preferred_nid,
 void colormem_init(void);
 void rebalance_colormem(int nid, long nr_page);
 
-unsigned long atomic_nr_free_ppool_page(void);
-void refill_ppool(unsigned long target_num_pages, int nid, colormask_t *colormask);
+unsigned long atomic_nr_free_ppool_page(int pool);
+void refill_ppool(int pool, unsigned long target_num_pages, int nid, colormask_t *colormask);
 
 inline struct page *
 ___alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
 		nodemask_t *nodemask, int *preferred_color, colormask_t *colormask,
-		bool use_ppool);
+		bool use_ppool, int ppool);
 
 struct page *
 __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,

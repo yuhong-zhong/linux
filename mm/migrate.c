@@ -2020,6 +2020,7 @@ struct color_remap_control {
 	int preferred_color;
 	colormask_t *colormask;
 	bool use_ppool;
+	int ppool;
 };
 
 struct page *color_remap_alloc(struct page *page, unsigned long private)
@@ -2033,7 +2034,7 @@ struct page *color_remap_alloc(struct page *page, unsigned long private)
 	nodes_clear(nodemask);
 	node_set(ctrl->nid, nodemask);
 	return ___alloc_pages_nodemask(GFP_COLOR, COLOR_PAGE_ORDER, ctrl->nid,
-			&nodemask, &ctrl->preferred_color, ctrl->colormask, ctrl->use_ppool);
+			&nodemask, &ctrl->preferred_color, ctrl->colormask, ctrl->use_ppool, ctrl->ppool);
 }
 
 int color_remap(struct color_remap_req *req, colormask_t *colormask)
@@ -2050,6 +2051,7 @@ int color_remap(struct color_remap_req *req, colormask_t *colormask)
 		.preferred_color = req->preferred_color,
 		.colormask = colormask,
 		.use_ppool = req->use_ppool != 0,
+		.ppool = req->ppool,
 	};
 	int num_migrate_err = 0;
 

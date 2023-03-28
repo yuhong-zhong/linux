@@ -1509,6 +1509,7 @@ static noinline void __init kernel_init_freeable(void)
 	set_colors_allowed_ptr(current, color_all_mask);
 	current->preferred_color = 0;
 	current->use_ppool = false;
+	current->ppool = 0;
 	/* initialize color mem pool */
 	colormem_init();
 
