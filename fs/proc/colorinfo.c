@@ -250,7 +250,10 @@ static const struct proc_ops pfn_proc_ops = {
 
 static int color_ppool_proc_show(struct seq_file *m, void *v)
 {
-	seq_printf(m, "%lu\n", atomic_nr_free_ppool_page());
+	int pool;
+	for (pool = 0; pool < NR_PPOOLS; ++pool) {
+		seq_printf(m, "Pool %d: %lu\n", pool, atomic_nr_free_ppool_page(pool));
+	}
 	return 0;
 }
 
@@ -274,10 +277,34 @@ static long color_ppool_proc_ioctl(struct file *file, unsigned int request, unsi
 			return -EINVAL;
 		if (!node_online(req.nid))
 			return -EINVAL;
-		refill_ppool(req.target_num_pages, req.nid, &colormask);
+		if (req.pool < 0 || req.pool >= NR_PPOOLS)
+			return -EINVAL;
+		refill_ppool(req.pool, req.target_num_pages, req.nid, &colormask);
 		return 0;
 	}
 	case PPOOL_IOC_ENABLE:
+	{
+		int pid;
+		struct task_struct *p;
+		int ret;
+		struct ppool_enable_req req;
+
+		if (copy_from_user(&req, (void __user *) arg, sizeof(req)))
+			return -EFAULT;
+		if (req.pool < 0 || req.pool >= NR_PPOOLS)
+			return -EINVAL;
+		rcu_read_lock();
+		p = pid ? find_task_by_vpid(pid) : current;
+		if (p) {
+			p->use_ppool = true;
+			p->ppool = req.pool;
+			ret = 0;
+		} else {
+			ret = -ESRCH;
+		}
+		rcu_read_unlock();
+		return ret;
+	}
 	case PPOOL_IOC_DISABLE:
 	{
 		int pid;
@@ -289,7 +316,8 @@ static long color_ppool_proc_ioctl(struct file *file, unsigned int request, unsi
 		rcu_read_lock();
 		p = pid ? find_task_by_vpid(pid) : current;
 		if (p) {
-			p->use_ppool = (request == PPOOL_IOC_ENABLE);
+			p->use_ppool = false;
+			p->ppool = 0;
 			ret = 0;
 		} else {
 			ret = -ESRCH;
