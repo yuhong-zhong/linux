@@ -109,13 +109,15 @@
 	{1UL << PG_unevictable,		"unevictable"	},		\
 	{1UL << PG_colored,		"colored"	},		\
 	{1UL << PG_ppooled,		"ppooled"	},		\
-	{1UL << PG_capture,		"capture"	}		\
+	{1UL << PG_capture,		"capture"	},		\
+	{1UL << PG_ppooled_idx_0,	"ppooled_idx_0"	}		\
 IF_HAVE_PG_MLOCK(PG_mlocked,		"mlocked"	)		\
 IF_HAVE_PG_UNCACHED(PG_uncached,	"uncached"	)		\
 IF_HAVE_PG_HWPOISON(PG_hwpoison,	"hwpoison"	)		\
 IF_HAVE_PG_IDLE(PG_young,		"young"		)		\
 IF_HAVE_PG_IDLE(PG_idle,		"idle"		)		\
 IF_HAVE_PG_ARCH_2(PG_arch_2,		"arch_2"	)
+// ,{1UL << PG_ppooled_idx_1,	"ppooled_idx_1"	}
 
 #define show_page_flags(flags)						\
 	(flags) ? __print_flags(flags, "|",				\
