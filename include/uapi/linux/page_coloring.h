@@ -8,7 +8,7 @@
 #define DRAM_SIZE_PER_NODE (96ul << 30)  // 96 GB DRAM per NUMA node
 #define NR_COLORS 768u  // 768 colors; each color represents 96 GB / 768 = 128 MB DRAM
 #define NR_PMEM_CHUNK 8  // Optane to DRAM ratio is 1:8; each DRAM line corresponds to 8 Optane lines
-#define NR_PPOOLS 8u
+#define NR_PPOOLS 2u
 
 struct ppool_fill_req {
 	int pool;
