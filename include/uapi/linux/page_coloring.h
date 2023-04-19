@@ -43,7 +43,8 @@ struct color_remap_req {
 };
 
 struct color_swap_req {
-	int pid;
+	int pid_1;
+	int pid_2;
 	int num_pages;
 	void __user * __user *page_arr_1;
 	void __user * __user *page_arr_2;
