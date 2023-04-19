@@ -2403,8 +2403,8 @@ void abort_color_swap_pair(struct color_swap_pair *pair, struct list_head *putba
 
 int color_swap(struct color_swap_req *req)
 {
-	nodemask_t task_nodes;
-	struct mm_struct *mm;
+	nodemask_t task_nodes_1, task_nodes_2;
+	struct mm_struct *mm_1, *mm_2;
 	int ret, err;
 	int i;
 	int num_get_page_err = 0;
@@ -2430,9 +2430,15 @@ int color_swap(struct color_swap_req *req)
 	int nr_subpages;
 
 	// XXX: kernel_move_pages
-	mm = find_mm_struct(req->pid, &task_nodes);
-	if (IS_ERR(mm))
-		return PTR_ERR(mm);
+	mm_1 = find_mm_struct(req->pid_1, &task_nodes_1);
+	if (IS_ERR(mm_1)) {
+		return PTR_ERR(mm_1);
+	}
+	mm_2 = find_mm_struct(req->pid_2, &task_nodes_2);
+	if (IS_ERR(mm_2)) {
+		mmput(mm_1);
+		return PTR_ERR(mm_2);
+	}
 
 	// XXX: do_pages_move
 	migrate_prep();
@@ -2450,7 +2456,7 @@ int color_swap(struct color_swap_req *req)
 			continue;
 		}
 		addr = (unsigned long) untagged_addr(raw_addr);
-		err = _add_page_for_migration(mm, addr, NUMA_NO_NODE,
+		err = _add_page_for_migration(mm_1, addr, NUMA_NO_NODE,
 				&page_list, true, true);
 		if (err <= 0) {
 			num_add_page_err++;
@@ -2470,7 +2476,7 @@ int color_swap(struct color_swap_req *req)
 			goto putback_first_page;
 		}
 		addr = (unsigned long) untagged_addr(raw_addr);
-		err = _add_page_for_migration(mm, addr, NUMA_NO_NODE,
+		err = _add_page_for_migration(mm_2, addr, NUMA_NO_NODE,
 				&page_list, true, true);
 		if (err <= 0) {
 			num_add_page_err++;
@@ -2610,7 +2616,8 @@ put_mm:
 	req->num_succeeded = nr_succeeded;
 	req->num_thp_succeeded = nr_thp_succeeded;
 
-	mmput(mm);
+	mmput(mm_2);
+	mmput(mm_1);
 	return ret;
 }
 
