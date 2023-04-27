@@ -1656,30 +1656,41 @@ static int _add_page_for_migration(struct mm_struct *mm, unsigned long addr,
 	mmap_read_lock(mm);
 	err = -EFAULT;
 	vma = find_vma(mm, addr);
-	if (!vma || addr < vma->vm_start || !vma_migratable(vma))
+	if (!vma || addr < vma->vm_start || !vma_migratable(vma)) {
+		printk("_add_page_for_migration: 1\n");
 		goto out;
+	}
 
 	/* FOLL_DUMP to ignore special (like zero) pages */
 	follflags = FOLL_GET | FOLL_DUMP;
 	page = follow_page(vma, addr, follflags);
 
 	err = PTR_ERR(page);
-	if (IS_ERR(page))
+	if (IS_ERR(page)) {
+		printk("_add_page_for_migration: 2\n");
 		goto out;
+	}
 
 	err = -ENOENT;
-	if (!page)
+	if (!page) {
+		printk("_add_page_for_migration: 3\n");
 		goto out;
+	}
 
 	err = 0;
-	if (page_to_nid(page) == node)
+	if (page_to_nid(page) == node) {
+		printk("_add_page_for_migration: 4\n");
 		goto out_putpage;
+	}	
 
 	err = -EACCES;
-	if (page_mapcount(page) > 1 && !migrate_all)
+	if (page_mapcount(page) > 1 && !migrate_all) {
+		printk("_add_page_for_migration: 5\n");
 		goto out_putpage;
+	}
 
 	if (PageHuge(page)) {
+		printk("_add_page_for_migration: huge\n");
 		if (PageHead(page)) {
 			isolate_huge_page(page, pagelist);
 			err = 1;
@@ -1688,11 +1699,15 @@ static int _add_page_for_migration(struct mm_struct *mm, unsigned long addr,
 		struct page *head;
 
 		head = compound_head(page);
-		if (only_colored_or_ppooled && (!PageColored(head) && !PagePpooled(head)))
+		if (only_colored_or_ppooled && (!PageColored(head) && !PagePpooled(head))) {
+			printk("_add_page_for_migration: 6\n");
 			goto out_putpage;
+		}
 		err = isolate_lru_page(head);
-		if (err)
+		if (err) {
+			printk("_add_page_for_migration: 7\n");
 			goto out_putpage;
+		}
 
 		err = 1;
 		list_add_tail(&head->lru, pagelist);
