@@ -534,12 +534,11 @@ unlock:
 	spin_unlock_irqrestore(&private_color_pool->lock, flags);
 }
 
-bool try_capture_page(struct page *page)
+bool try_capture_page(struct page *page, unsigned int order)
 {
 	unsigned long flags;
 	bool success = false;
 
-	WARN_ON(!PageColored(page) && !PagePpooled(page));
 	WARN_ON(!PageCapture(page));
 	ClearPageCapture(page);
 
@@ -548,7 +547,7 @@ bool try_capture_page(struct page *page)
 		WARN_ON(true);
 		goto unlock;
 	}
-	prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0), 0);
+	prep_new_page(page, order, __GFP_HIGHMEM | (order > 0 ? __GFP_COMP : 0), 0);
 	captured_page = page;
 	success = true;
 unlock:
@@ -566,7 +565,6 @@ struct page *get_captured_page()
 	captured_page = NULL;
 	spin_unlock_irqrestore(&page_capture_lock, flags);
 
-	WARN_ON(page && !PageColored(page) && !PagePpooled(page));
 	return page;
 }
 
@@ -2151,7 +2149,7 @@ static void __free_pages_ok(struct page *page, unsigned int order,
 
 	__count_vm_events(PGFREE, 1 << order);
 	if (PageCapture(page)) {
-		if (try_capture_page(page))
+		if (try_capture_page(page, order))
 			goto out;
 	}
 	if (PagePpooled(page)) {
@@ -3969,7 +3967,7 @@ void free_unref_page(struct page *page, unsigned int order)
 		return;
 
 	if (PageCapture(page)) {
-		if (try_capture_page(page))
+		if (try_capture_page(page, 0))
 			return;
 	}
 	if (PagePpooled(page)) {
