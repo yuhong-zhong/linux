@@ -2202,7 +2202,6 @@ struct page *color_swap_alloc_given_page(struct page *page, unsigned long privat
 {
 	struct page *newpage = (struct page *) private;
 
-	WARN_ON(!PageColored(newpage) && !PagePpooled(newpage));
 	WARN_ON(compound_order(page) != compound_order(newpage));
 
 	// XXX alloc_migration_target
@@ -2226,8 +2225,6 @@ void color_swap_put_page_and_capture(struct page *page, unsigned long private)
 {
 	struct page **captured_page = (struct page **) private;
 
-	// color_swap ensures that the migration source and target should be either colored or ppooled
-	WARN_ON(!PageColored(page) && !PagePpooled(page));
 	WARN_ON(PageCapture(page));
 
 	// Won't be able to capture
@@ -2535,7 +2532,7 @@ int color_swap(struct color_swap_req *req)
 		}
 		addr = (unsigned long) untagged_addr(raw_addr);
 		err = _add_page_for_migration(mm_1, addr, NUMA_NO_NODE,
-				&page_list, true, true);
+				&page_list, true, false);
 		if (err <= 0) {
 			num_add_page_err++;
 			continue;
@@ -2555,7 +2552,7 @@ int color_swap(struct color_swap_req *req)
 		}
 		addr = (unsigned long) untagged_addr(raw_addr);
 		err = _add_page_for_migration(mm_2, addr, NUMA_NO_NODE,
-				&page_list, true, true);
+				&page_list, true, false);
 		if (err <= 0) {
 			num_add_page_err++;
 			goto putback_first_page;
