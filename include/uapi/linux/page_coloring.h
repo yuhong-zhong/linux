@@ -48,6 +48,7 @@ struct color_swap_req {
 	int num_pages;
 	void __user * __user *page_arr_1;
 	void __user * __user *page_arr_2;
+	bool swap_ppool_index;
 
 	int num_get_page_err;
 	int num_add_page_err;
