@@ -2580,6 +2580,19 @@ int color_swap(struct color_swap_req *req)
 		pair->page_tmp = NULL;
 		INIT_LIST_HEAD(&pair->list);
 		list_add_tail(&pair->list, &pair_list);
+		if (req->swap_ppool_index && PagePpooled(page_1) && PagePpooled(page_2)) {
+			int ppool_index_1 = PagePpooledIdx0(page_1) ? 1 : 0;
+			int ppool_index_2 = PagePpooledIdx0(page_2) ? 1 : 0;
+
+			if (ppool_index_1 == 0)
+				ClearPagePpooledIdx0(page_2);
+			else
+				SetPagePpooledIdx0(page_2);
+			if (ppool_index_2 == 0)
+				ClearPagePpooledIdx0(page_1);
+			else
+				SetPagePpooledIdx0(page_1);
+		}
 		continue;
 
 putback_second_page:
