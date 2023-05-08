@@ -128,6 +128,18 @@ static long madvise_behavior(struct vm_area_struct *vma,
 		if (error)
 			goto out_convert_errno;
 		break;
+	case MADV_NO_PPOOL:
+		new_flags &= ~VM_PPOOL_0;
+		new_flags &= ~VM_PPOOL_1;
+		break;
+	case MADV_PPOOL_0:
+		new_flags |= VM_PPOOL_0;
+		new_flags &= ~VM_PPOOL_1;
+		break;
+	case MADV_PPOOL_1:
+		new_flags &= ~VM_PPOOL_0;
+		new_flags |= VM_PPOOL_1;
+		break;
 	}
 
 	if (new_flags == vma->vm_flags) {
@@ -1037,6 +1049,10 @@ madvise_behavior_valid(int behavior)
 #endif
 		return true;
 
+	case MADV_NO_PPOOL:
+	case MADV_PPOOL_0:
+	case MADV_PPOOL_1:
+		return true;
 	default:
 		return false;
 	}

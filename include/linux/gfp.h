@@ -540,7 +540,7 @@ void rebalance_colormem(int nid, long nr_page);
 unsigned long atomic_nr_free_ppool_page(int pool);
 void refill_ppool(int pool, unsigned long target_num_pages, int nid, colormask_t *colormask);
 
-inline struct page *
+struct page *
 ___alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
 		nodemask_t *nodemask, int *preferred_color, colormask_t *colormask,
 		bool use_ppool, int ppool);

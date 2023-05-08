@@ -2149,7 +2149,24 @@ struct page *alloc_pages_vma(gfp_t gfp, int order, struct vm_area_struct *vma,
 
 	nmask = policy_nodemask(gfp, pol);
 	preferred_nid = policy_node(gfp, pol, node);
-	page = __alloc_pages(gfp, order, preferred_nid, nmask);
+	if (vma->vm_flags & VM_PPOOL_0 || vma->vm_flags & VM_PPOOL_1) {
+		int ppool;
+		if (vma->vm_flags & VM_PPOOL_0) {
+			WARN_ON(vma->vm_flags & VM_PPOOL_1);
+			ppool = 0;
+		} else if (vma->vm_flags & VM_PPOOL_1) {
+			WARN_ON(vma->vm_flags & VM_PPOOL_0);
+			ppool = 1;
+		} else {
+			WARN_ON(true);
+			ppool = 0;
+		}
+		page = ___alloc_pages(gfp, order, preferred_nid, nmask,
+		                      0, color_all_mask, true, ppool);
+		// TODO: Support THP
+	} else {
+		page = __alloc_pages(gfp, order, preferred_nid, nmask);
+	}
 	mpol_cond_put(pol);
 out:
 	return page;
