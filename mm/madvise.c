@@ -1057,6 +1057,18 @@ static int madvise_vma_behavior(struct vm_area_struct *vma,
 		if (error)
 			goto out;
 		break;
+	case MADV_NO_PPOOL:
+		new_flags &= ~VM_PPOOL_0;
+		new_flags &= ~VM_PPOOL_1;
+		break;
+	case MADV_PPOOL_0:
+		new_flags |= VM_PPOOL_0;
+		new_flags &= ~VM_PPOOL_1;
+		break;
+	// case MADV_PPOOL_1:
+	// 	new_flags &= ~VM_PPOOL_0;
+	// 	new_flags |= VM_PPOOL_1;
+	// 	break;
 	}
 
 	anon_name = anon_vma_name(vma);
@@ -1161,6 +1173,10 @@ madvise_behavior_valid(int behavior)
 #endif
 		return true;
 
+	case MADV_NO_PPOOL:
+	case MADV_PPOOL_0:
+	case MADV_PPOOL_1:
+		return true;
 	default:
 		return false;
 	}

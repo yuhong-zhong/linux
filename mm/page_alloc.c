@@ -5933,7 +5933,7 @@ EXPORT_SYMBOL_GPL(__alloc_pages_bulk);
 /*
  * This is the 'heart' of the zoned buddy allocator.
  */
-inline struct page *___alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
+struct page *___alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
 	nodemask_t *nodemask, int *preferred_color, colormask_t *colormask, bool use_ppool, int ppool)
 {
 	struct page *page;
@@ -6040,6 +6040,17 @@ __alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid, nodemask_t *node
 			current ? current->ppool : 0);
 }
 EXPORT_SYMBOL(__alloc_pages);
+
+struct folio *___folio_alloc(gfp_t gfp, unsigned int order, int preferred_nid,
+		nodemask_t *nodemask, int *preferred_color, colormask_t *colormask, bool use_ppool, int ppool)
+{
+	struct page *page = ___alloc_pages(gfp | __GFP_COMP, order,
+			preferred_nid, nodemask, preferred_color, colormask, use_ppool, ppool);
+
+	if (page && order > 1)
+		prep_transhuge_page(page);
+	return (struct folio *)page;
+}
 
 struct folio *__folio_alloc(gfp_t gfp, unsigned int order, int preferred_nid,
 		nodemask_t *nodemask)
