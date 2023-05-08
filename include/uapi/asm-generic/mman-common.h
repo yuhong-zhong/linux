@@ -72,6 +72,10 @@
 #define MADV_COLD	20		/* deactivate these pages */
 #define MADV_PAGEOUT	21		/* reclaim these pages */
 
+#define MADV_NO_PPOOL	22
+#define MADV_PPOOL_0	23
+#define MADV_PPOOL_1	24
+
 /* compatibility flags */
 #define MAP_FILE	0
 

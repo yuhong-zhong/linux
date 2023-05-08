@@ -5457,7 +5457,7 @@ static inline bool prepare_alloc_pages(gfp_t gfp_mask, unsigned int order,
 /*
  * This is the 'heart' of the zoned buddy allocator.
  */
-inline struct page *
+struct page *
 ___alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
 		nodemask_t *nodemask, int *preferred_color, colormask_t *colormask,
 		bool use_ppool, int ppool)
