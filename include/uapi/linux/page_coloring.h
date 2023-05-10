@@ -22,9 +22,16 @@ struct ppool_enable_req {
 	int pid;
 };
 
+struct ppool_release_req {
+	int pool;
+	__u64 num_pages;
+	__u64 __user *phys_addr_arr;
+};
+
 #define PPOOL_IOC_FILL		_IOW('^', 0, struct ppool_fill_req *)
 #define PPOOL_IOC_ENABLE	_IOW('^', 1, struct ppool_enable_req *)
 #define PPOOL_IOC_DISABLE	_IOW('^', 2, int *)
+#define PPOOL_IOC_RELEASE	_IOW('^', 3, struct ppool_release_req *)
 
 
 struct color_remap_req {
