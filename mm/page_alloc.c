@@ -530,6 +530,115 @@ unlock:
 	spin_unlock_irqrestore(&private_color_pool->lock, flags);
 }
 
+struct uint64_node {
+	struct rb_node node;
+	uint64_t value;
+};
+
+static bool insert_uint64_node(struct rb_root *root, struct uint64_node *new_node)
+{
+	struct rb_node **new = &(root->rb_node), *parent = NULL;
+
+	/* Figure out where to put new node */
+	while (*new) {
+		struct uint64_node *this = container_of(*new, struct uint64_node, node);
+		parent = *new;
+		if (new_node->value < this->value)
+			new = &((*new)->rb_left);
+		else if (new_node->value > this->value)
+			new = &((*new)->rb_right);
+		else
+			return false;
+	}
+
+	/* Add new node and rebalance tree. */
+	rb_link_node(&new_node->node, parent, new);
+	rb_insert_color(&new_node->node, root);
+
+	return true;
+}
+
+static bool search_uint64_node(struct rb_root *root, uint64_t value)
+{
+	struct rb_node *node = root->rb_node;
+
+	while (node) {
+		struct uint64_node *this = container_of(node, struct uint64_node, node);
+
+		if (value < this->value)
+			node = node->rb_left;
+		else if (value > this->value)
+			node = node->rb_right;
+		else
+			return true;
+	}
+
+	return false;
+}
+
+long release_ppool(int pool, uint64_t num_pages, uint64_t __user *phys_addr_arr)
+{
+	uint64_t i;
+	long ret = 0;
+	struct private_color_pool *private_color_pool = &private_color_pool_arr[pool];
+	struct rb_root root = RB_ROOT;
+	struct uint64_node *node, *next;
+	unsigned long flags;
+	struct page *page, *next_page;
+	WARN_ON(pool < 0 || pool >= NR_PPOOLS);
+
+	for (i = 0; i < num_pages; ++i) {
+		uint64_t phys_addr;
+		int err;
+		struct uint64_node *new_node;
+
+		err = get_user(phys_addr, phys_addr_arr + i);
+		if (err) {
+			ret = -EFAULT;
+			goto free_rb_tree;
+		}
+		if (phys_addr & (PAGE_SIZE - 1)) {
+			ret = -EINVAL;
+			goto free_rb_tree;
+		}
+
+		new_node = kmalloc(sizeof(struct uint64_node), GFP_KERNEL);
+		if (!new_node) {
+			ret = -ENOMEM;
+			goto free_rb_tree;
+		}
+		new_node->value = phys_addr;
+		if (!insert_uint64_node(&root, new_node)) {
+			// Duplicate phys_addr
+			kfree(new_node);
+			ret = -EINVAL;
+			goto free_rb_tree;
+		}
+	}
+
+	spin_lock_irqsave(&private_color_pool->lock, flags);
+	list_for_each_entry_safe(page, next_page, &private_color_pool->free_list, lru) {
+		uint64_t page_phys_addr = page_to_phys(page);
+		if (search_uint64_node(&root, page_phys_addr)) {
+			list_del_init(&page->lru);
+			--private_color_pool->nr_pages;
+			clear_page_ppooled_index(page);
+			ClearPagePpooled(page);
+			SetPageColored(page);
+			atomic_insert_free_color_page(page);
+			++ret;
+		}
+	}
+	spin_unlock_irqrestore(&private_color_pool->lock, flags);
+
+free_rb_tree:
+	rbtree_postorder_for_each_entry_safe(node, next, &root, node) {
+		rb_erase(&node->node, &root);
+		kfree(node);
+	}
+	return ret;
+}
+
 bool try_capture_page(struct page *page, unsigned int order)
 {
 	unsigned long flags;
