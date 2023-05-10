@@ -325,6 +325,21 @@ static long color_ppool_proc_ioctl(struct file *file, unsigned int request, unsi
 		rcu_read_unlock();
 		return ret;
 	}
+	case PPOOL_IOC_RELEASE:
+	{
+		struct ppool_release_req req;
+		long ret;
+
+		if (copy_from_user(&req, (void __user *) arg, sizeof(req)))
+			return -EFAULT;
+		if (req.pool < 0 || req.pool >= NR_PPOOLS)
+			return -EINVAL;
+		if (req.num_pages == 0)
+			return 0;
+
+		ret = release_ppool(req.pool, req.num_pages, req.phys_addr_arr);
+		return ret;
+	}
 	default:
 		return -ENOTTY;
 	}
