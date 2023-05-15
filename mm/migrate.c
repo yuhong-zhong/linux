@@ -2226,6 +2226,7 @@ void color_swap_put_page_and_capture(struct page *page, unsigned long private)
 	struct page **captured_page = (struct page **) private;
 
 	WARN_ON(PageCapture(page));
+	WARN_ON(page_mapcount(page) != 0);
 
 	// Won't be able to capture
 	if (page_count(page) != 1) {
@@ -2249,6 +2250,8 @@ enum color_swap_state {
 
 struct color_swap_pair {
 	int state;
+	unsigned long addr_1;
+	unsigned long addr_2;
 	struct page *page_1;
 	struct page *page_2;
 	struct page *page_tmp;
@@ -2519,19 +2522,25 @@ int color_swap(struct color_swap_req *req)
 	migrate_prep();
 
 	for (i = 0; i < req->num_pages; ++i) {
-		void __user *raw_addr;
-		unsigned long addr;
+		void __user *raw_addr_1, *raw_addr_2;
+		unsigned long addr_1, addr_2;
 		struct color_swap_pair *pair;
 		struct page *page_1, *page_2;
 
-		// isolate and check the first page
-		err = get_user(raw_addr, req->page_arr_1 + i);
+		err = get_user(raw_addr_1, req->page_arr_1 + i);
 		if (err) {
 			num_get_page_err++;
 			continue;
 		}
-		addr = (unsigned long) untagged_addr(raw_addr);
-		err = _add_page_for_migration(mm_1, addr, NUMA_NO_NODE,
+		addr_1 = (unsigned long) untagged_addr(raw_addr_1);
+		err = get_user(raw_addr_2, req->page_arr_2 + i);
+		if (err) {
+			num_get_page_err++;
+		}
+		addr_2 = (unsigned long) untagged_addr(raw_addr_2);
+
+		// isolate and check the first page
+		err = _add_page_for_migration(mm_1, addr_1, NUMA_NO_NODE,
 				&page_list, true, false);
 		if (err <= 0) {
 			num_add_page_err++;
@@ -2540,18 +2549,14 @@ int color_swap(struct color_swap_req *req)
 		page_1 = list_last_entry(&page_list, struct page, lru);
 		list_del(&page_1->lru);
 		if (color_swap_should_skip_page(page_1)) {
+			copy_to_user((void __user *) (req->skipped_page_arr_1 + num_skipped_page), &raw_addr_1, sizeof(raw_addr_1));
+			copy_to_user((void __user *) (req->skipped_page_arr_2 + num_skipped_page), &raw_addr_2, sizeof(raw_addr_2));
 			num_skipped_page++;
 			goto putback_first_page;
 		}
 
 		// isolate and check the second page
-		err = get_user(raw_addr, req->page_arr_2 + i);
-		if (err) {
-			num_get_page_err++;
-			goto putback_first_page;
-		}
-		addr = (unsigned long) untagged_addr(raw_addr);
-		err = _add_page_for_migration(mm_2, addr, NUMA_NO_NODE,
+		err = _add_page_for_migration(mm_2, addr_2, NUMA_NO_NODE,
 				&page_list, true, false);
 		if (err <= 0) {
 			num_add_page_err++;
@@ -2560,10 +2565,14 @@ int color_swap(struct color_swap_req *req)
 		page_2 = list_last_entry(&page_list, struct page, lru);
 		list_del(&page_2->lru);
 		if (color_swap_should_skip_page(page_2)) {
+			copy_to_user((void __user *) (req->skipped_page_arr_1 + num_skipped_page), &raw_addr_1, sizeof(raw_addr_1));
+			copy_to_user((void __user *) (req->skipped_page_arr_2 + num_skipped_page), &raw_addr_2, sizeof(raw_addr_2));
 			num_skipped_page++;
 			goto putback_second_page;
 		}
 		if (thp_nr_pages(page_1) != thp_nr_pages(page_2)) {
+			copy_to_user((void __user *) (req->skipped_page_arr_1 + num_skipped_page), &raw_addr_1, sizeof(raw_addr_1));
+			copy_to_user((void __user *) (req->skipped_page_arr_2 + num_skipped_page), &raw_addr_2, sizeof(raw_addr_2));
 			num_skipped_page++;
 			goto putback_second_page;
 		}
@@ -2575,6 +2584,8 @@ int color_swap(struct color_swap_req *req)
 			goto putback_second_page;
 		}
 		pair->state = CW_BOTH_ISOLATED;
+		pair->addr_1 = addr_1;
+		pair->addr_2 = addr_2;
 		pair->page_1 = page_1;
 		pair->page_2 = page_2;
 		pair->page_tmp = NULL;

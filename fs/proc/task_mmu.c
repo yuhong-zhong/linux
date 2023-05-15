@@ -1298,6 +1298,8 @@ struct pagemapread {
 #define PM_SOFT_DIRTY		BIT_ULL(55)
 #define PM_MMAP_EXCLUSIVE	BIT_ULL(56)
 #define PM_UFFD_WP		BIT_ULL(57)
+#define PM_NO_EXTRA_REF		BIT_ULL(59)
+#define PM_PPOOLED		BIT_ULL(60)
 #define PM_FILE			BIT_ULL(61)
 #define PM_SWAP			BIT_ULL(62)
 #define PM_PRESENT		BIT_ULL(63)
@@ -1392,6 +1394,10 @@ static pagemap_entry_t pte_to_pagemap_entry(struct pagemapread *pm,
 		flags |= PM_FILE;
 	if (page && page_mapcount(page) == 1)
 		flags |= PM_MMAP_EXCLUSIVE;
+	if (page && PagePpooled(page))
+		flags |= PM_PPOOLED;
+	if (page && page_count(page) == page_mapcount(page))
+		flags |= PM_NO_EXTRA_REF;
 	if (vma->vm_flags & VM_SOFTDIRTY)
 		flags |= PM_SOFT_DIRTY;
 
@@ -1560,7 +1566,9 @@ static const struct mm_walk_ops pagemap_ops = {
  * Bits 5-54  swap offset if swapped
  * Bit  55    pte is soft-dirty (see Documentation/admin-guide/mm/soft-dirty.rst)
  * Bit  56    page exclusively mapped
- * Bits 57-60 zero
+ * Bits 57-58 zero
+ * Bit  59    page does not have extra references
+ * Bit  60    page is PPOOLED
  * Bit  61    page is file-page or shared-anon
  * Bit  62    page swapped
  * Bit  63    page present
