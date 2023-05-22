@@ -272,7 +272,7 @@ void rotate_reclaimable_page(struct page *page)
 		get_page(page);
 		local_lock_irqsave(&lru_rotate.lock, flags);
 		pvec = this_cpu_ptr(&lru_rotate.pvec);
-		if (!pagevec_add(pvec, page) || PageCompound(page))
+		if (!pagevec_add(pvec, page) || PageCompound(page) || PagePpooled(page) || PageColored(page))
 			pagevec_move_tail(pvec);
 		local_unlock_irqrestore(&lru_rotate.lock, flags);
 	}
@@ -357,7 +357,7 @@ static void activate_page(struct page *page)
 		local_lock(&lru_pvecs.lock);
 		pvec = this_cpu_ptr(&lru_pvecs.activate_page);
 		get_page(page);
-		if (!pagevec_add(pvec, page) || PageCompound(page))
+		if (!pagevec_add(pvec, page) || PageCompound(page) || PagePpooled(page) || PageColored(page))
 			pagevec_lru_move_fn(pvec, __activate_page, NULL);
 		local_unlock(&lru_pvecs.lock);
 	}
@@ -469,7 +469,7 @@ void lru_cache_add(struct page *page)
 	get_page(page);
 	local_lock(&lru_pvecs.lock);
 	pvec = this_cpu_ptr(&lru_pvecs.lru_add);
-	if (!pagevec_add(pvec, page) || PageCompound(page))
+	if (!pagevec_add(pvec, page) || PageCompound(page) || PagePpooled(page) || PageColored(page))
 		__pagevec_lru_add(pvec);
 	local_unlock(&lru_pvecs.lock);
 }
@@ -678,7 +678,7 @@ void deactivate_file_page(struct page *page)
 		local_lock(&lru_pvecs.lock);
 		pvec = this_cpu_ptr(&lru_pvecs.lru_deactivate_file);
 
-		if (!pagevec_add(pvec, page) || PageCompound(page))
+		if (!pagevec_add(pvec, page) || PageCompound(page) || PagePpooled(page) || PageColored(page))
 			pagevec_lru_move_fn(pvec, lru_deactivate_file_fn, NULL);
 		local_unlock(&lru_pvecs.lock);
 	}
@@ -700,7 +700,7 @@ void deactivate_page(struct page *page)
 		local_lock(&lru_pvecs.lock);
 		pvec = this_cpu_ptr(&lru_pvecs.lru_deactivate);
 		get_page(page);
-		if (!pagevec_add(pvec, page) || PageCompound(page))
+		if (!pagevec_add(pvec, page) || PageCompound(page) || PagePpooled(page) || PageColored(page))
 			pagevec_lru_move_fn(pvec, lru_deactivate_fn, NULL);
 		local_unlock(&lru_pvecs.lock);
 	}
@@ -722,7 +722,7 @@ void mark_page_lazyfree(struct page *page)
 		local_lock(&lru_pvecs.lock);
 		pvec = this_cpu_ptr(&lru_pvecs.lru_lazyfree);
 		get_page(page);
-		if (!pagevec_add(pvec, page) || PageCompound(page))
+		if (!pagevec_add(pvec, page) || PageCompound(page) || PagePpooled(page) || PageColored(page))
 			pagevec_lru_move_fn(pvec, lru_lazyfree_fn, NULL);
 		local_unlock(&lru_pvecs.lock);
 	}
