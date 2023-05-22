@@ -231,7 +231,7 @@ static bool pagevec_add_and_need_flush(struct pagevec *pvec, struct page *page)
 {
 	bool ret = false;
 
-	if (!pagevec_add(pvec, page) || PageCompound(page) ||
+	if (!pagevec_add(pvec, page) || PageCompound(page) || PagePpooled(page) || PageColored(page) ||
 			lru_cache_disabled())
 		ret = true;
 
