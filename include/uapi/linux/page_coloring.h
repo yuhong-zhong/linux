@@ -83,8 +83,9 @@ struct color_fake_remap_req {
 	int num_thp_succeeded;
 };
 
-#define COLOR_IOC_REMAP		_IOW('?', 0, struct color_remap_req *)
-#define COLOR_IOC_SWAP		_IOW('?', 1, struct color_swap_req *)
-#define COLOR_IOC_FAKE_REMAP	_IOW('?', 2, struct color_fake_remap_req *)
+#define COLOR_IOC_REMAP		_IOWR('?', 0, struct color_remap_req *)
+#define COLOR_IOC_SWAP		_IOWR('?', 1, struct color_swap_req *)
+#define COLOR_IOC_FAKE_REMAP	_IOWR('?', 2, struct color_fake_remap_req *)
+#define COLOR_IOC_PREP		_IO('?', 3)
 
 #endif /* _LINUX_PAGE_COLORING_H */
