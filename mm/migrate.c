@@ -2171,9 +2171,6 @@ put_mm:
 bool color_swap_should_skip_page(struct page *page)
 {
 	// Should be called after isolating the page from LRU
-	if (page_count(page) != page_mapcount(page) + 1) {
-		return true;
-	}
 	if (!PageAnon(page)) {
 		return true;
 	}
@@ -2228,6 +2225,9 @@ void color_swap_put_page_and_capture(struct page *page, unsigned long private)
 	WARN_ON(PageCapture(page));
 	WARN_ON(page_mapcount(page) != 0);
 
+	while (page_count(page) != 1 && !signal_pending(current)) {
+		cond_resched();
+	}
 	// Won't be able to capture
 	if (page_count(page) != 1) {
 		put_page(page);
@@ -2628,7 +2628,7 @@ putback_first_page:
 	if (!swapwrite)
 		current->flags |= PF_SWAPWRITE;
 
-	for (pass = 0; pass < 10 && (retry || thp_retry); pass++) {
+	for (pass = 0; /* pass < 10 */ !signal_pending(current) && (retry || thp_retry); pass++) {
 		retry = 0;
 		thp_retry = 0;
 
@@ -2676,6 +2676,8 @@ putback_first_page:
 				break;
 			}
 		}
+		if (pass >= 10 && need_resched())
+			cond_resched();
 	}
 
 	list_for_each_entry_safe(pair, pair2, &pair_list, list) {
