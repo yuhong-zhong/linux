@@ -158,6 +158,11 @@ static long colorinfo_proc_ioctl(struct file *file, unsigned int request, unsign
 		copy_to_user((void __user *) arg, &req, sizeof(req));
 		return ret;
 	}
+	case COLOR_IOC_PREP:
+	{
+		lru_add_drain_all();
+		return 0;
+	}
 	default:
 		return -ENOTTY;
 	}
