@@ -135,7 +135,7 @@ enum pageflags {
 	PG_colored,
 	PG_ppooled,
 	PG_capture,
-	PG_ppooled_idx_0,
+	// PG_ppooled_idx_0,
 	// PG_ppooled_idx_1,
 #ifdef CONFIG_64BIT
 	PG_arch_2,
@@ -514,7 +514,7 @@ PAGEFLAG(Checked, checked, PF_NO_COMPOUND)	   /* Used by some filesystems */
 PAGEFLAG(Colored, colored, PF_HEAD)
 PAGEFLAG(Ppooled, ppooled, PF_HEAD)
 PAGEFLAG(Capture, capture, PF_HEAD)
-PAGEFLAG(PpooledIdx0, ppooled_idx_0, PF_HEAD)
+// PAGEFLAG(PpooledIdx0, ppooled_idx_0, PF_HEAD)
 // PAGEFLAG(PpooledIdx1, ppooled_idx_1, PF_HEAD)
 
 /* Xen */
@@ -1080,7 +1080,13 @@ static __always_inline void __ClearPageAnonExclusive(struct page *page)
  * alloc-free cycle to prevent from reusing the page.
  */
 #define PAGE_FLAGS_CHECK_AT_PREP	\
-	(PAGEFLAGS_MASK & ~__PG_HWPOISON & ~(1UL << PG_colored) & ~(1UL << PG_ppooled) & ~(1UL << PG_capture) & ~(1UL << PG_ppooled_idx_0))
+	(				\
+		PAGEFLAGS_MASK 		\
+		& ~__PG_HWPOISON	\
+		& ~(1UL << PG_colored)	\
+		& ~(1UL << PG_ppooled)	\
+		& ~(1UL << PG_capture)	\
+	)
 
 #define PAGE_FLAGS_PRIVATE				\
 	(1UL << PG_private | 1UL << PG_private_2)

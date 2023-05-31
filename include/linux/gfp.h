@@ -561,7 +561,7 @@ struct page *__alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
 		nodemask_t *nodemask);
 
 struct folio *___folio_alloc(gfp_t gfp, unsigned int order, int preferred_nid,
-		nodemask_t *nodemask, int *preferred_color, colormask_t *colormask, bool use_ppool, int ppool)
+		nodemask_t *nodemask, int *preferred_color, colormask_t *colormask, bool use_ppool, int ppool);
 
 struct folio *__folio_alloc(gfp_t gfp, unsigned int order, int preferred_nid,
 		nodemask_t *nodemask);

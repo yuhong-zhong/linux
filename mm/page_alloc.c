@@ -115,10 +115,10 @@ inline void set_page_ppooled_index(struct page *page, int pool)
 	WARN_ON(!PagePpooled(page));
 	WARN_ON(pool < 0 || pool >= NR_PPOOLS);
 
-	if (pool & 1)
-		SetPagePpooledIdx0(page);
-	else
-		ClearPagePpooledIdx0(page);
+	// if (pool & 1)
+	// 	SetPagePpooledIdx0(page);
+	// else
+	// 	ClearPagePpooledIdx0(page);
 	// if (pool & (1 << 1))
 	// 	SetPagePpooledIdx1(page);
 	// else
@@ -129,7 +129,7 @@ inline int get_page_ppooled_index(struct page *page)
 {
 	int pool = 0;
 
-	pool += PagePpooledIdx0(page) ? 1 : 0;
+	// pool += PagePpooledIdx0(page) ? 1 : 0;
 	// pool += PagePpooledIdx1(page) ? (1 << 1) : 0;
 	WARN_ON(pool < 0 || pool >= NR_PPOOLS);
 
@@ -138,7 +138,7 @@ inline int get_page_ppooled_index(struct page *page)
 
 inline void clear_page_ppooled_index(struct page *page)
 {
-	ClearPagePpooledIdx0(page);
+	// ClearPagePpooledIdx0(page);
 	// ClearPagePpooledIdx1(page);
 }
 
@@ -325,8 +325,8 @@ void rebalance_colormem(int nid, long nr_page)
 		nr_page_target = nr_page - atomic_nr_free_color_page(nid, color);
 		credit = COLOR_ALLOC_MAX_ATTEMPT;
 		while (nr_page_target > 0 && credit > 0) {
-			page = __alloc_pages_nodemask(__GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0),
-			                              COLOR_PAGE_ORDER, nid, &nodemask);
+			page = __alloc_pages(__GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0),
+			                     COLOR_PAGE_ORDER, nid, &nodemask);
 			if (!page)
 				break;
 			SetPageColored(page);
@@ -2259,16 +2259,16 @@ static void __free_pages_ok(struct page *page, unsigned int order,
 	__count_vm_events(PGFREE, 1 << order);
 	if (PageCapture(page)) {
 		if (try_capture_page(page, order))
-			goto out;
+			return;
 	}
 	if (PagePpooled(page)) {
 		free_ppool_page(page);
-		goto out;
+		return;
 	}
 	if (PageColored(page)) {
 		prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0), 0);
 		atomic_insert_free_color_page(page);
-		goto out;
+		return;
 	}
 
 	spin_lock_irqsave(&zone->lock, flags);
@@ -4042,6 +4042,20 @@ static void free_unref_page_commit(struct page *page, int migratetype,
 	bool free_high;
 
 	__count_vm_event(PGFREE);
+	if (PageCapture(page)) {
+		if (try_capture_page(page, 0))
+			return;
+	}
+	if (PagePpooled(page)) {
+		free_ppool_page(page);
+		return;
+	}
+	if (PageColored(page)) {
+		prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0), 0);
+		atomic_insert_free_color_page(page);
+		return;
+	}
+
 	pcp = this_cpu_ptr(zone->per_cpu_pageset);
 	pindex = order_to_pindex(migratetype, order);
 	list_add(&page->lru, &pcp->lists[pindex]);
@@ -4074,20 +4088,6 @@ void free_unref_page(struct page *page, unsigned int order)
 
 	if (!free_unref_page_prepare(page, pfn, order))
 		return;
-
-	if (PageCapture(page)) {
-		if (try_capture_page(page, 0))
-			return;
-	}
-	if (PagePpooled(page)) {
-		free_ppool_page(page);
-		return;
-	}
-	if (PageColored(page)) {
-		prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0), 0);
-		atomic_insert_free_color_page(page);
-		return;
-	}
 
 	/*
 	 * We only track unmovable, reclaimable and movable on pcp lists.

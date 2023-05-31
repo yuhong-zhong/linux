@@ -2233,7 +2233,7 @@ struct folio *vma_alloc_folio(gfp_t gfp, int order, struct vm_area_struct *vma,
 	if (vma->vm_flags & VM_PPOOL_0/* || vma->vm_flags & VM_PPOOL_1 */) {
 		int ppool;
 		if (vma->vm_flags & VM_PPOOL_0) {
-			WARN_ON(vma->vm_flags & VM_PPOOL_1);
+			// WARN_ON(vma->vm_flags & VM_PPOOL_1);
 			ppool = 0;
 		// } else if (vma->vm_flags & VM_PPOOL_1) {
 		// 	WARN_ON(vma->vm_flags & VM_PPOOL_0);
