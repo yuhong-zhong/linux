@@ -2122,7 +2122,7 @@ int color_remap(struct color_remap_req *req, colormask_t *colormask)
 	// For now, we do not require req->nid to be set in task_nodes
 
 	// XXX: do_pages_move
-	migrate_prep();
+	lru_cache_disable();
 
 	for (i = 0; i < req->num_pages; ++i) {
 		void __user *page;
@@ -2149,15 +2149,18 @@ int color_remap(struct color_remap_req *req, colormask_t *colormask)
 	// XXX: do_move_pages_to_node
 	num_migrate_err = migrate_pages(&pagelist, color_remap_alloc,
 			NULL, (unsigned long) &ctrl, MIGRATE_SYNC,
-			MR_SYSCALL);
+			MR_SYSCALL, NULL);
 	if (num_migrate_err > 0)
 		putback_movable_pages(&pagelist);
 	ret = 0;
 
 	// XXX: move_pages_and_store_status
-	// XXX: do_pages_move
-	// XXX: kernel_move_pages
 put_mm:
+	// XXX: do_pages_move
+	lru_cache_enable();
+
+	// XXX: kernel_move_pages
+
 	req->preferred_color = ctrl.preferred_color;
 
 	req->num_get_page_err = num_get_page_err;
@@ -2519,7 +2522,7 @@ int color_swap(struct color_swap_req *req)
 	}
 
 	// XXX: do_pages_move
-	migrate_prep();
+	lru_cache_disable();
 
 	for (i = 0; i < req->num_pages; ++i) {
 		void __user *raw_addr_1, *raw_addr_2;
@@ -2591,19 +2594,19 @@ int color_swap(struct color_swap_req *req)
 		pair->page_tmp = NULL;
 		INIT_LIST_HEAD(&pair->list);
 		list_add_tail(&pair->list, &pair_list);
-		if (req->swap_ppool_index && PagePpooled(page_1) && PagePpooled(page_2)) {
-			int ppool_index_1 = PagePpooledIdx0(page_1) ? 1 : 0;
-			int ppool_index_2 = PagePpooledIdx0(page_2) ? 1 : 0;
+		// if (req->swap_ppool_index && PagePpooled(page_1) && PagePpooled(page_2)) {
+		// 	int ppool_index_1 = PagePpooledIdx0(page_1) ? 1 : 0;
+		// 	int ppool_index_2 = PagePpooledIdx0(page_2) ? 1 : 0;
 
-			if (ppool_index_1 == 0)
-				ClearPagePpooledIdx0(page_2);
-			else
-				SetPagePpooledIdx0(page_2);
-			if (ppool_index_2 == 0)
-				ClearPagePpooledIdx0(page_1);
-			else
-				SetPagePpooledIdx0(page_1);
-		}
+		// 	if (ppool_index_1 == 0)
+		// 		ClearPagePpooledIdx0(page_2);
+		// 	else
+		// 		SetPagePpooledIdx0(page_2);
+		// 	if (ppool_index_2 == 0)
+		// 		ClearPagePpooledIdx0(page_1);
+		// 	else
+		// 		SetPagePpooledIdx0(page_1);
+		// }
 		continue;
 
 putback_second_page:
@@ -2706,9 +2709,12 @@ putback_first_page:
 		current->flags &= ~PF_SWAPWRITE;
 
 	// XXX: move_pages_and_store_status
-	// XXX: do_pages_move
-	// XXX: kernel_move_pages
 put_mm:
+	// XXX: do_pages_move
+	lru_cache_enable();
+
+	// XXX: kernel_move_pages
+
 	req->num_get_page_err = num_get_page_err;
 	req->num_add_page_err = num_add_page_err;
 	req->num_skipped_page = num_skipped_page;
@@ -2773,7 +2779,7 @@ int do_color_fake_remap(struct color_fake_remap_ctx *ctx, int pass, struct list_
 			rc = unmap_and_move(alloc_migration_target, NULL,
 					color_swap_put_page_and_capture, (unsigned long) &mtc,
 					(unsigned long) &captured_page,
-					ctx->page_1, pass > 2, MIGRATE_SYNC, MR_SYSCALL, false,
+					ctx->page_1, pass > 2, MIGRATE_SYNC, MR_SYSCALL, NULL, false,
 					&ctx->page_tmp, false, true);
 			switch (rc) {
 			case MIGRATEPAGE_SUCCESS:
@@ -2826,7 +2832,7 @@ int do_color_fake_remap(struct color_fake_remap_ctx *ctx, int pass, struct list_
 			WARN_ON(PageHuge(ctx->page_tmp));
 			rc = unmap_and_move(color_swap_alloc_given_page, color_swap_put_given_page,
 					NULL, (unsigned long) ctx->page_1, (unsigned long) NULL,
-					ctx->page_tmp, pass > 2, MIGRATE_SYNC, MR_SYSCALL, true,
+					ctx->page_tmp, pass > 2, MIGRATE_SYNC, MR_SYSCALL, NULL, true,
 					NULL, false, true);
 			switch (rc) {
 			case MIGRATEPAGE_SUCCESS:
@@ -2922,7 +2928,7 @@ int color_fake_remap(struct color_fake_remap_req *req)
 		return PTR_ERR(mm);
 
 	// XXX: do_pages_move
-	migrate_prep();
+	lru_cache_disable();
 
 	for (i = 0; i < req->num_pages; ++i) {
 		void __user *raw_addr;
@@ -3057,9 +3063,12 @@ putback_page:
 		current->flags &= ~PF_SWAPWRITE;
 
 	// XXX: move_pages_and_store_status
-	// XXX: do_pages_move
-	// XXX: kernel_move_pages
 put_mm:
+	// XXX: do_pages_move
+	lru_cache_enable();
+
+	// XXX: kernel_move_pages
+
 	req->num_get_page_err = num_get_page_err;
 	req->num_add_page_err = num_add_page_err;
 	req->num_skipped_page = num_skipped_page;

@@ -1593,9 +1593,6 @@ static noinline void __init kernel_init_freeable(void)
 	 */
 	set_mems_allowed(node_states[N_MEMORY]);
 
-<<<<<<< HEAD
-	cad_pid = get_pid(task_pid(current));
-=======
 	/* initialize root color config */
 	set_colors_allowed_ptr(current, color_all_mask);
 	current->preferred_color = 0;
@@ -1604,8 +1601,7 @@ static noinline void __init kernel_init_freeable(void)
 	/* initialize color mem pool */
 	colormem_init();
 
-	cad_pid = task_pid(current);
->>>>>>> Add Optane page coloring
+	cad_pid = get_pid(task_pid(current));
 
 	smp_prepare_cpus(setup_max_cpus);
 
