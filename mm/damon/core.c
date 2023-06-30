@@ -1187,6 +1187,15 @@ static int kdamond_fn(void *data)
 			kdamond_split_regions(ctx);
 			if (ctx->ops.reset_aggregated)
 				ctx->ops.reset_aggregated(ctx);
+		} else {
+			// Aggressive region splitting
+			unsigned int nr_regions = 0;
+			struct damon_target *t;
+
+			damon_for_each_target(t, ctx)
+				nr_regions += damon_nr_regions(t);
+			if (nr_regions < ctx->min_nr_regions)
+				kdamond_split_regions(ctx);
 		}
 
 		if (kdamond_need_update_operations(ctx)) {
