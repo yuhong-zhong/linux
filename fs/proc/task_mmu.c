@@ -1498,6 +1498,11 @@ static int pagemap_pmd_range(pmd_t *pmdp, unsigned long addr, unsigned long end,
 		if (page && !migration && page_mapcount(page) == 1)
 			flags |= PM_MMAP_EXCLUSIVE;
 
+		if (page && PagePpooled(page))
+			flags |= PM_PPOOLED;
+		if (page && page_count(page) == page_mapcount(page))
+			flags |= PM_NO_EXTRA_REF;
+
 		for (; addr != end; addr += PAGE_SIZE) {
 			pagemap_entry_t pme = make_pme(frame, flags);
 
