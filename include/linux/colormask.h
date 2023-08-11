@@ -11,8 +11,6 @@
 #include <linux/bitmap.h>
 #include <uapi/linux/page_coloring.h>
 
-// #define COLOR_THP  // Enable coloring for Transparent Huge Page
-
 #ifdef COLOR_THP
 #define COLOR_PAGE_SHIFT HPAGE_PMD_SHIFT
 #else
