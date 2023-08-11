@@ -2188,7 +2188,7 @@ struct folio *vma_alloc_folio(gfp_t gfp, int order, struct vm_area_struct *vma,
 		goto out;
 	}
 
-	if (unlikely(IS_ENABLED(CONFIG_TRANSPARENT_HUGEPAGE) && hugepage)) {
+	if (unlikely(IS_ENABLED(CONFIG_TRANSPARENT_HUGEPAGE) && hugepage && !(vma->vm_flags & VM_PPOOL_0)/* && !(vma->vm_flags & VM_PPOOL_1)*/)) {
 		int hpage_node = node;
 
 		/*
@@ -2243,8 +2243,7 @@ struct folio *vma_alloc_folio(gfp_t gfp, int order, struct vm_area_struct *vma,
 			ppool = 0;
 		}
 		folio = ___folio_alloc(gfp, order, preferred_nid, nmask,
-		                       0, color_all_mask, true, ppool);
-		// TODO: Support THP
+		                       NULL, color_all_mask, true, ppool);
 	} else {
 		folio = __folio_alloc(gfp, order, preferred_nid, nmask);
 	}
