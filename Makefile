@@ -2,7 +2,7 @@
 VERSION = 5
 PATCHLEVEL = 19
 SUBLEVEL = 0
-EXTRAVERSION = -coloring
+EXTRAVERSION = -coloring-thp
 NAME = Superb Owl
 
 # *DOCUMENTATION*

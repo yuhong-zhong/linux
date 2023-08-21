@@ -4043,7 +4043,7 @@ static void free_unref_page_commit(struct page *page, int migratetype,
 
 	__count_vm_event(PGFREE);
 	if (PageCapture(page)) {
-		if (try_capture_page(page, 0))
+		if (try_capture_page(page, order))
 			return;
 	}
 	if (PagePpooled(page)) {
