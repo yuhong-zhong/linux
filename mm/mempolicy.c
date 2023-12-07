@@ -1056,7 +1056,7 @@ void check_toptier_balanced(void)
 		if (!node_is_toptier(nid))
 			continue;
 
-		balanced = pgdat_toptier_balanced(pgdat, 0, ZONE_MOVABLE);
+		balanced = pgdat_toptier_balanced(pgdat, 0, ZONE_DMA32) || pgdat_toptier_balanced(pgdat, 0, ZONE_NORMAL);
 		if (!balanced) {
 			pgdat->kswapd_order = 0;
 			pgdat->kswapd_highest_zoneidx = ZONE_NORMAL;

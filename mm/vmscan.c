@@ -3774,7 +3774,7 @@ static bool pgdat_balanced(pg_data_t *pgdat, int order, int highest_zoneidx)
 
 	if (numa_promotion_tiered_enabled && node_is_toptier(pgdat->node_id) &&
 			highest_zoneidx >= ZONE_NORMAL)
-		return pgdat_toptier_balanced(pgdat, 0, highest_zoneidx);
+		return pgdat_toptier_balanced(pgdat, 0, ZONE_DMA32) || pgdat_toptier_balanced(pgdat, 0, ZONE_NORMAL);
 	/*
 	 * Check watermarks bottom-up as lower zones are more likely to
 	 * meet watermarks.
@@ -3806,13 +3806,10 @@ bool pgdat_toptier_balanced(pg_data_t *pgdat, int order, int zone_idx)
 	unsigned long mark;
 	struct zone *zone;
 
-	if (!node_is_toptier(pgdat->node_id) ||
-		!numa_promotion_tiered_enabled ||
-		order > 0 || zone_idx < ZONE_NORMAL) {
+	if (!node_is_toptier(pgdat->node_id) || !numa_promotion_tiered_enabled || order != 0)
 		return true;
-	}
 
-	zone = pgdat->node_zones + ZONE_NORMAL;
+	zone = pgdat->node_zones + zone_idx;
 
 	if (!managed_zone(zone))
 		return true;
