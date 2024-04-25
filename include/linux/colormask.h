@@ -24,7 +24,7 @@
  * of available pages to the coloring pool, otherwise the host will OOM
  */
 #define NR_COLOR_PAGE_MAX ((1ul << (28 - COLOR_PAGE_SHIFT)) * 3)
-#define COLOR_ALLOC_MAX_ATTEMPT 16384
+#define COLOR_ALLOC_MAX_ATTEMPT (NR_COLORS * 2)
 
 // Number of PFNs to record for debugging
 #define COLOR_NR_PFNS 524288

@@ -6,10 +6,11 @@
 #define COLOR_THP  // Enable coloring for Transparent Huge Page
 
 /* FIXME: update this info whenever try on new machine */
-#define DRAM_SIZE_PER_NODE (96ul << 30)  // 96 GB DRAM per NUMA node
-#define NR_COLORS 768u  // 768 colors; each color represents 96 GB / 768 = 128 MB DRAM
-#define NR_PMEM_CHUNK 8  // Optane to DRAM ratio is 1:8; each DRAM line corresponds to 8 Optane lines
+#define DRAM_SIZE_PER_NODE ((127ul << 30) + (1ul << 29))  // 127.5 GB DRAM per NUMA node
+#define NR_COLORS 1020  // 1020 colors; each color represents 127.5 GB / 1020 = 128 MB DRAM
+#define NR_PMEM_CHUNK 2  // Optane to DRAM ratio is 1:2; each DRAM line corresponds to 2 Optane lines
 #define NR_PPOOLS 1u
+
 
 struct ppool_fill_req {
 	int pool;
