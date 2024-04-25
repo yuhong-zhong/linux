@@ -7,6 +7,7 @@
 #include <linux/stddef.h>
 #include <linux/linkage.h>
 #include <linux/topology.h>
+#include <linux/colormask.h>
 
 /* The typedef is in types.h but we want the documentation here */
 #if 0
@@ -352,6 +353,7 @@ struct vm_area_struct;
 #define GFP_TRANSHUGE_LIGHT	((GFP_HIGHUSER_MOVABLE | __GFP_COMP | \
 			 __GFP_NOMEMALLOC | __GFP_NOWARN) & ~__GFP_RECLAIM)
 #define GFP_TRANSHUGE	(GFP_TRANSHUGE_LIGHT | __GFP_DIRECT_RECLAIM)
+#define GFP_COLOR ((GFP_HIGHUSER) & (~__GFP_RECLAIM))
 
 /* Convert GFP flags to their corresponding migrate type */
 #define GFP_MOVABLE_MASK (__GFP_RECLAIMABLE|__GFP_MOVABLE)
@@ -538,8 +540,29 @@ static inline void arch_free_page(struct page *page, int order) { }
 static inline void arch_alloc_page(struct page *page, int order) { }
 #endif
 
+int get_colorinfo(struct colorinfo **ci);
+int get_page_color(struct page *page);
+int get_page_chunk(struct page *page);
+struct page *alloc_color_page(nodemask_t *nodemask, int preferred_nid,
+                              colormask_t *colormask, int preferred_color);
+void colormem_init(void);
+void rebalance_colormem(int nid, long nr_page);
+
+unsigned long atomic_nr_free_ppool_page(int pool);
+void refill_ppool(int pool, unsigned long target_num_pages, int nid, colormask_t *colormask);
+long release_ppool(int pool, uint64_t num_pages, uint64_t __user *phys_addr_arr);
+
+struct page *
+___alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
+		nodemask_t *nodemask, int *preferred_color, colormask_t *colormask,
+		bool use_ppool, int ppool);
+
 struct page *__alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
 		nodemask_t *nodemask);
+
+struct folio *___folio_alloc(gfp_t gfp, unsigned int order, int preferred_nid,
+		nodemask_t *nodemask, int *preferred_color, colormask_t *colormask, bool use_ppool, int ppool);
+
 struct folio *__folio_alloc(gfp_t gfp, unsigned int order, int preferred_nid,
 		nodemask_t *nodemask);
 
@@ -715,5 +738,12 @@ void free_contig_range(unsigned long pfn, unsigned long nr_pages);
 /* CMA stuff */
 extern void init_cma_reserved_pageblock(struct page *page);
 #endif
+
+void atomic_insert_free_color_page(struct page *page);
+struct page *atomic_get_free_color_page(int nid, int color);
+struct page *alloc_color_page(nodemask_t *nodemask, int preferred_nid,
+                              colormask_t *colormask, int preferred_color);
+void atomic_reset_preferred_list(int nid, int color, bool lock);
+struct page *get_captured_page(void);
 
 #endif /* __LINUX_GFP_H */

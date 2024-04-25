@@ -315,6 +315,10 @@ extern unsigned int kobjsize(const void *objp);
 #define VM_HIGH_ARCH_2	BIT(VM_HIGH_ARCH_BIT_2)
 #define VM_HIGH_ARCH_3	BIT(VM_HIGH_ARCH_BIT_3)
 #define VM_HIGH_ARCH_4	BIT(VM_HIGH_ARCH_BIT_4)
+
+#define VM_PPOOL_0		BIT(37)
+// #define VM_PPOOL_1		BIT(38)
+
 #endif /* CONFIG_ARCH_USES_HIGH_VMA_FLAGS */
 
 #ifdef CONFIG_ARCH_HAS_PKEYS
@@ -2581,6 +2585,8 @@ extern int min_free_kbytes;
 extern int watermark_boost_factor;
 extern int watermark_scale_factor;
 extern bool arch_has_descending_max_zone_pfns(void);
+
+extern void colormem_init(void);
 
 /* nommu.c */
 extern atomic_long_t mmap_pages_allocated;

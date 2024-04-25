@@ -13,6 +13,8 @@
  *  Zone balancing, Kanoj Sarcar, SGI, Jan 2000
  *  Per cpu hot/cold page lists, bulk allocation, Martin J. Bligh, Sept 2002
  *          (lots of bits borrowed from Ingo Molnar & Andrew Morton)
+ *  Page coloring, Jeongseob Ahn, May 2015
+ *  Page coloring, Yuhong Zhong, Sep 2022
  */
 
 #include <linux/stddef.h>
@@ -82,6 +84,628 @@
 #include "shuffle.h"
 #include "page_reporting.h"
 #include "swap.h"
+
+struct free_color_area {
+	struct list_head free_list[NR_PMEM_CHUNK];
+	unsigned long nr_free[NR_PMEM_CHUNK];
+	unsigned long nr_allocated[NR_PMEM_CHUNK];
+	spinlock_t lock;
+	int preferred_list;
+};
+
+/* TODO: register a reclaimer */
+/* TODO: add hooks to other free page locations (e.g., OOM reaper) */
+
+struct free_color_area color_area_arr[MAX_NUMNODES][NR_COLORS];
+
+struct private_color_pool {
+	struct list_head free_list;
+	unsigned long nr_pages;
+	spinlock_t lock;
+} private_color_pool_arr[NR_PPOOLS];
+
+struct page *captured_page;
+spinlock_t page_capture_lock;
+
+static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags,
+							unsigned int alloc_flags);
+
+inline void set_page_ppooled_index(struct page *page, int pool)
+{
+	WARN_ON(!PagePpooled(page));
+	WARN_ON(pool < 0 || pool >= NR_PPOOLS);
+
+	// if (pool & 1)
+	// 	SetPagePpooledIdx0(page);
+	// else
+	// 	ClearPagePpooledIdx0(page);
+	// if (pool & (1 << 1))
+	// 	SetPagePpooledIdx1(page);
+	// else
+	// 	ClearPagePpooledIdx1(page);
+}
+
+inline int get_page_ppooled_index(struct page *page)
+{
+	int pool = 0;
+
+	// pool += PagePpooledIdx0(page) ? 1 : 0;
+	// pool += PagePpooledIdx1(page) ? (1 << 1) : 0;
+	WARN_ON(pool < 0 || pool >= NR_PPOOLS);
+
+	return pool;
+}
+
+inline void clear_page_ppooled_index(struct page *page)
+{
+	// ClearPagePpooledIdx0(page);
+	// ClearPagePpooledIdx1(page);
+}
+
+int get_colorinfo(struct colorinfo **ci)
+{
+	int nr_numa;
+	int nid, color, i, chunk;
+
+	nr_numa = num_online_nodes();
+	*ci = kmalloc(sizeof(struct colorinfo) * nr_numa * NR_COLORS, GFP_KERNEL);
+	if (!(*ci)) {
+		printk("color: get_colorinfo failed to allocation memory for ci\n");
+		return -ENOMEM;
+	}
+	i = 0;
+	for_each_online_node(nid) {
+		for (color = 0; color < NR_COLORS; ++color) {
+			for (chunk = 0; chunk < NR_PMEM_CHUNK; ++chunk) {
+				(*ci)[i].total_free_pages[chunk] = color_area_arr[nid][color].nr_free[chunk];
+				(*ci)[i].total_allocated_pages[chunk] = color_area_arr[nid][color].nr_allocated[chunk];
+			}
+			(*ci)[i].nid = nid;
+			(*ci)[i].color = color;
+			++i;
+		}
+	}
+	return nr_numa * NR_COLORS;
+}
+EXPORT_SYMBOL(get_colorinfo);
+
+int get_page_color(struct page *page)
+{
+	int nid;
+	phys_addr_t addr, node_base_addr, dram_addr;
+	unsigned long dram_index;
+	unsigned long tmp_1, tmp_2;
+
+	nid = page_to_nid(page);
+	addr = page_to_pfn(page) << PAGE_SHIFT;
+	node_base_addr = NODE_DATA(nid)->node_start_pfn << PAGE_SHIFT;
+	if (node_base_addr == (1l << PAGE_SHIFT))
+		node_base_addr = 0;
+	dram_addr = (addr - node_base_addr) % DRAM_SIZE_PER_NODE;
+	dram_index = dram_addr >> COLOR_PAGE_SHIFT;
+
+	tmp_1 = dram_index % NR_COLORS;
+	tmp_2 = dram_index / NR_COLORS;
+
+	return (tmp_1 + tmp_2) % NR_COLORS;
+}
+EXPORT_SYMBOL(get_page_color);
+
+int get_page_chunk(struct page *page)
+{
+	int nid;
+	phys_addr_t addr, node_base_addr;
+	int chunk;
+
+	nid = page_to_nid(page);
+	addr = page_to_pfn(page) << PAGE_SHIFT;
+	node_base_addr = NODE_DATA(nid)->node_start_pfn << PAGE_SHIFT;
+	if (node_base_addr == (1l << PAGE_SHIFT))
+		node_base_addr = 0;
+	chunk = (addr - node_base_addr) / DRAM_SIZE_PER_NODE;
+	return chunk;
+}
+
+static long atomic_nr_free_color_page(int nid, int color)
+{
+	int chunk;
+	unsigned long flags;
+	long nr_free_page = 0;
+	spin_lock_irqsave(&color_area_arr[nid][color].lock, flags);
+	for (chunk = 0; chunk < NR_PMEM_CHUNK; ++chunk)
+		nr_free_page += color_area_arr[nid][color].nr_free[chunk];
+	spin_unlock_irqrestore(&color_area_arr[nid][color].lock, flags);
+	return nr_free_page;
+}
+
+void atomic_reset_preferred_list(int nid, int color, bool lock)
+{
+	int chunk, i;
+	unsigned long flags;
+
+	if (lock)
+		spin_lock_irqsave(&color_area_arr[nid][color].lock, flags);
+	chunk = 0;
+	for (i = 0; i < NR_PMEM_CHUNK; ++i)
+		if (color_area_arr[nid][color].nr_free[i] > color_area_arr[nid][color].nr_free[chunk])
+			chunk = i;
+	color_area_arr[nid][color].preferred_list = chunk;
+	if (lock)
+		spin_unlock_irqrestore(&color_area_arr[nid][color].lock, flags);
+}
+EXPORT_SYMBOL(atomic_reset_preferred_list);
+
+struct page *atomic_get_free_color_page(int nid, int color)
+{
+	int chunk;
+	struct page *page = NULL;
+	bool retry = false;
+	unsigned long flags;
+
+	spin_lock_irqsave(&color_area_arr[nid][color].lock, flags);
+retry:
+	chunk = color_area_arr[nid][color].preferred_list;
+	if (list_empty(&color_area_arr[nid][color].free_list[chunk])) {
+		if (!retry) {
+			atomic_reset_preferred_list(nid, color, false);
+			retry = true;
+			goto retry;
+		} else {
+			goto out;
+		}
+	}
+	page = list_first_entry(&color_area_arr[nid][color].free_list[chunk], struct page, lru);
+	list_del_init(&page->lru);
+	--color_area_arr[nid][color].nr_free[chunk];
+	++color_area_arr[nid][color].nr_allocated[chunk];
+out:
+	spin_unlock_irqrestore(&color_area_arr[nid][color].lock, flags);
+	return page;
+}
+EXPORT_SYMBOL(atomic_get_free_color_page);
+
+void atomic_insert_free_color_page(struct page *page)
+{
+	int nid = page_to_nid(page);
+	int color = get_page_color(page);
+	int chunk = get_page_chunk(page);
+	unsigned long flags;
+
+	WARN_ON(!PageColored(page));
+	spin_lock_irqsave(&color_area_arr[nid][color].lock, flags);
+	list_add_tail(&page->lru, &color_area_arr[nid][color].free_list[chunk]);
+	++color_area_arr[nid][color].nr_free[chunk];
+	spin_unlock_irqrestore(&color_area_arr[nid][color].lock, flags);
+}
+EXPORT_SYMBOL(atomic_insert_free_color_page);
+
+static bool atomic_release_free_color_page(int nid, int color)
+{
+	struct page *page = NULL;
+	int chunk = 0;
+	int i;
+	unsigned long flags;
+
+	spin_lock_irqsave(&color_area_arr[nid][color].lock, flags);
+	for (i = 0; i < NR_PMEM_CHUNK; ++i) {
+		if (color_area_arr[nid][color].nr_free[i] > color_area_arr[nid][color].nr_free[chunk]) {
+			chunk = i;
+		}
+	}
+	if (!list_empty(&color_area_arr[nid][color].free_list[chunk])) {
+		page = list_first_entry(&color_area_arr[nid][color].free_list[chunk], struct page, lru);
+		list_del_init(&page->lru);
+		--color_area_arr[nid][color].nr_free[chunk];
+	}
+	spin_unlock_irqrestore(&color_area_arr[nid][color].lock, flags);
+
+	if (page) {
+		ClearPageColored(page);
+		__free_pages(page, COLOR_PAGE_ORDER);
+	}
+	return page != NULL;
+}
+
+void rebalance_colormem(int nid, long nr_page)
+{
+	nodemask_t nodemask;
+	struct page *page;
+	int color;
+	long nr_page_target, credit;
+
+	if (nr_page > NR_COLOR_PAGE_MAX) {
+		nr_page = NR_COLOR_PAGE_MAX;
+		printk("rebalance_colormem: nr_page too large\n");
+	}
+
+	/* refill */
+	nodemask = NODE_MASK_NONE;
+	node_set(nid, nodemask);
+	for (color = 0; color < NR_COLORS; ++color) {
+		nr_page_target = nr_page - atomic_nr_free_color_page(nid, color);
+		credit = COLOR_ALLOC_MAX_ATTEMPT;
+		while (nr_page_target > 0 && credit > 0) {
+			page = __alloc_pages(__GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0),
+			                     COLOR_PAGE_ORDER, nid, &nodemask);
+			if (!page)
+				break;
+			SetPageColored(page);
+			if (color == get_page_color(page)) {
+				--nr_page_target;
+				credit = COLOR_ALLOC_MAX_ATTEMPT;
+			} else {
+				--credit;
+			}
+
+			/*
+			 * don't release the page even if the color does not matched,
+			 * otherwise we might be spinning on the same page
+			 */
+			atomic_insert_free_color_page(page);
+
+			if (need_resched())
+				cond_resched();
+			if (signal_pending(current))
+				return;
+		}
+	}
+
+	/* release */
+	for (color = 0; color < NR_COLORS; ++color) {
+		nr_page_target = atomic_nr_free_color_page(nid, color) - nr_page;
+		while (nr_page_target > 0) {
+			atomic_release_free_color_page(nid, color);
+			--nr_page_target;
+
+			if (need_resched())
+				cond_resched();
+			if (signal_pending(current))
+				return;
+		}
+		atomic_reset_preferred_list(nid, color, true);
+	}
+}
+EXPORT_SYMBOL(rebalance_colormem);
+
+extern uint64_t pfn_arr[COLOR_NR_PFNS];
+extern atomic_t pfn_index;
+
+struct page *alloc_color_page(nodemask_t *nodemask, int preferred_nid,
+                              colormask_t *colormask, int preferred_color)
+{
+	struct page *page = NULL;
+	bool node_retry = false, color_retry = false;
+	int nid, color;
+
+retry_node:
+	for_each_node_mask(nid, *nodemask) {
+		if (!node_retry && nid < preferred_nid)
+			continue;
+retry_color:
+		for_each_color(color, colormask) {
+			if (!color_retry && color < preferred_color)
+				continue;
+			page = atomic_get_free_color_page(nid, color);
+			if (page)
+				goto out;
+		}
+		if (!color_retry) {
+			color_retry = true;
+			goto retry_color;
+		}
+	}
+	if (!node_retry) {
+		node_retry = true;
+		color_retry = false;
+		goto retry_node;
+	}
+out:
+	if (page)
+		WARN_ON(!PageColored(page));
+	if (page) {
+		int index = atomic_fetch_inc(&pfn_index);
+		if (index >= 0 && index < COLOR_NR_PFNS)
+			pfn_arr[index] = page_to_pfn(page);
+	}
+	return page;
+}
+EXPORT_SYMBOL(alloc_color_page);
+
+struct page *alloc_ppool_page(int pool)
+{
+	unsigned long flags;
+	struct page *page = NULL;
+	struct private_color_pool *private_color_pool = &private_color_pool_arr[pool];
+	WARN_ON(pool < 0 || pool >= NR_PPOOLS);
+
+	spin_lock_irqsave(&private_color_pool->lock, flags);
+	if (private_color_pool->nr_pages > 0) {
+		WARN_ON(list_empty(&private_color_pool->free_list));
+		page = list_first_entry(&private_color_pool->free_list, struct page, lru);
+		list_del_init(&page->lru);
+		--private_color_pool->nr_pages;
+	}
+	spin_unlock_irqrestore(&private_color_pool->lock, flags);
+	if (page)
+		WARN_ON(!PagePpooled(page));
+	if (page) {
+		int index = atomic_fetch_inc(&pfn_index);
+		if (index >= 0 && index < COLOR_NR_PFNS)
+			pfn_arr[index] = page_to_pfn(page);
+	}
+	return page;
+}
+
+void free_ppool_page(struct page *page)
+{
+	unsigned long flags;
+	int pool;
+	struct private_color_pool *private_color_pool;
+
+	WARN_ON(!PagePpooled(page));
+	pool = get_page_ppooled_index(page);
+	WARN_ON(pool < 0 || pool >= NR_PPOOLS);
+	prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0), 0);
+
+	private_color_pool = &private_color_pool_arr[pool];
+	spin_lock_irqsave(&private_color_pool->lock, flags);
+	list_add_tail(&page->lru, &private_color_pool->free_list);
+	++private_color_pool->nr_pages;
+	spin_unlock_irqrestore(&private_color_pool->lock, flags);
+}
+
+unsigned long atomic_nr_free_ppool_page(int pool)
+{
+	unsigned long flags;
+	unsigned long nr_pages;
+	struct private_color_pool *private_color_pool = &private_color_pool_arr[pool];
+	WARN_ON(pool < 0 || pool >= NR_PPOOLS);
+
+	spin_lock_irqsave(&private_color_pool->lock, flags);
+	nr_pages = private_color_pool->nr_pages;
+	spin_unlock_irqrestore(&private_color_pool->lock, flags);
+	return nr_pages;
+}
+
+void refill_ppool(int pool, unsigned long target_num_pages, int nid, colormask_t *colormask)
+{
+	unsigned long flags;
+	struct page *page;
+	int color = colormask_first(colormask);
+	int retry = 0;
+	struct private_color_pool *private_color_pool = &private_color_pool_arr[pool];
+	WARN_ON(pool < 0 || pool >= NR_PPOOLS);
+	WARN_ON(color == NR_COLORS);  // colormask is empty
+
+resume:
+	spin_lock_irqsave(&private_color_pool->lock, flags);
+	while (private_color_pool->nr_pages > target_num_pages) {
+		// Release a page
+		WARN_ON(list_empty(&private_color_pool->free_list));
+		page = list_first_entry(&private_color_pool->free_list, struct page, lru);
+		list_del_init(&page->lru);
+		--private_color_pool->nr_pages;
+		clear_page_ppooled_index(page);
+		ClearPagePpooled(page);
+		SetPageColored(page);
+		atomic_insert_free_color_page(page);
+
+		if (need_resched()) {
+			spin_unlock_irqrestore(&private_color_pool->lock, flags);
+			cond_resched();
+			goto resume;
+		}
+		if (signal_pending(current)) {
+			goto unlock;
+		}
+	}
+
+	while (target_num_pages > private_color_pool->nr_pages) {
+		// Get a page
+		page = atomic_get_free_color_page(nid, color);
+		if (page != NULL) {
+			retry = 0;
+			ClearPageColored(page);
+			SetPagePpooled(page);
+			set_page_ppooled_index(page, pool);
+			list_add_tail(&page->lru, &private_color_pool->free_list);
+			++private_color_pool->nr_pages;
+		} else {
+			++retry;
+			if (retry == NR_COLORS) {
+				// Cannot get enough pages from the coloring pool
+				goto unlock;
+			}
+		}
+		color = colormask_next(color, colormask);
+		if (color == NR_COLORS)
+			color = colormask_first(colormask);
+
+		if (need_resched()) {
+			spin_unlock_irqrestore(&private_color_pool->lock, flags);
+			cond_resched();
+			goto resume;
+		}
+		if (signal_pending(current)) {
+			goto unlock;
+		}
+	}
+unlock:
+	spin_unlock_irqrestore(&private_color_pool->lock, flags);
+}
+
+struct uint64_node {
+	struct rb_node node;
+	uint64_t value;
+};
+
+static bool insert_uint64_node(struct rb_root *root, struct uint64_node *new_node)
+{
+	struct rb_node **new = &(root->rb_node), *parent = NULL;
+
+	/* Figure out where to put new node */
+	while (*new) {
+		struct uint64_node *this = container_of(*new, struct uint64_node, node);
+		parent = *new;
+		if (new_node->value < this->value)
+			new = &((*new)->rb_left);
+		else if (new_node->value > this->value)
+			new = &((*new)->rb_right);
+		else
+			return false;
+	}
+
+	/* Add new node and rebalance tree. */
+	rb_link_node(&new_node->node, parent, new);
+	rb_insert_color(&new_node->node, root);
+
+	return true;
+}
+
+static bool search_uint64_node(struct rb_root *root, uint64_t value)
+{
+	struct rb_node *node = root->rb_node;
+
+	while (node) {
+		struct uint64_node *this = container_of(node, struct uint64_node, node);
+
+		if (value < this->value)
+			node = node->rb_left;
+		else if (value > this->value)
+			node = node->rb_right;
+		else
+			return true;
+	}
+
+	return false;
+}
+
+long release_ppool(int pool, uint64_t num_pages, uint64_t __user *phys_addr_arr)
+{
+	uint64_t i;
+	long ret = 0;
+	struct private_color_pool *private_color_pool = &private_color_pool_arr[pool];
+	struct rb_root root = RB_ROOT;
+	struct uint64_node *node, *next;
+	unsigned long flags;
+	struct page *page, *next_page;
+	WARN_ON(pool < 0 || pool >= NR_PPOOLS);
+
+	for (i = 0; i < num_pages; ++i) {
+		uint64_t phys_addr;
+		int err;
+		struct uint64_node *new_node;
+
+		err = get_user(phys_addr, phys_addr_arr + i);
+		if (err) {
+			ret = -EFAULT;
+			goto free_rb_tree;
+		}
+		if (phys_addr & (PAGE_SIZE - 1)) {
+			ret = -EINVAL;
+			goto free_rb_tree;
+		}
+
+		new_node = kmalloc(sizeof(struct uint64_node), GFP_KERNEL);
+		if (!new_node) {
+			ret = -ENOMEM;
+			goto free_rb_tree;
+		}
+		new_node->value = phys_addr;
+		if (!insert_uint64_node(&root, new_node)) {
+			// Duplicate phys_addr
+			kfree(new_node);
+			ret = -EINVAL;
+			goto free_rb_tree;
+		}
+	}
+
+	spin_lock_irqsave(&private_color_pool->lock, flags);
+	list_for_each_entry_safe(page, next_page, &private_color_pool->free_list, lru) {
+		uint64_t page_phys_addr = page_to_phys(page);
+		if (search_uint64_node(&root, page_phys_addr)) {
+			list_del_init(&page->lru);
+			--private_color_pool->nr_pages;
+			clear_page_ppooled_index(page);
+			ClearPagePpooled(page);
+			SetPageColored(page);
+			atomic_insert_free_color_page(page);
+			++ret;
+		}
+	}
+	spin_unlock_irqrestore(&private_color_pool->lock, flags);
+
+free_rb_tree:
+	rbtree_postorder_for_each_entry_safe(node, next, &root, node) {
+		rb_erase(&node->node, &root);
+		kfree(node);
+	}
+	return ret;
+}
+
+bool try_capture_page(struct page *page, unsigned int order)
+{
+	unsigned long flags;
+	bool success = false;
+
+	WARN_ON(!PageCapture(page));
+	ClearPageCapture(page);
+
+	spin_lock_irqsave(&page_capture_lock, flags);
+	if (captured_page != NULL) {
+		WARN_ON(true);
+		goto unlock;
+	}
+	prep_new_page(page, order, __GFP_HIGHMEM | (order > 0 ? __GFP_COMP : 0), 0);
+	captured_page = page;
+	success = true;
+unlock:
+	spin_unlock_irqrestore(&page_capture_lock, flags);
+	return success;
+}
+
+struct page *get_captured_page()
+{
+	unsigned long flags;
+	struct page *page;
+
+	spin_lock_irqsave(&page_capture_lock, flags);
+	page = captured_page;
+	captured_page = NULL;
+	spin_unlock_irqrestore(&page_capture_lock, flags);
+
+	return page;
+}
+
+void __init colormem_init()
+{
+	int nid, color, chunk, pool;
+
+	for (nid = 0; nid < MAX_NUMNODES; ++nid) {
+		for (color = 0; color < NR_COLORS; ++color) {
+			for (chunk = 0; chunk < NR_PMEM_CHUNK; ++chunk) {
+				INIT_LIST_HEAD(&color_area_arr[nid][color].free_list[chunk]);
+				color_area_arr[nid][color].nr_free[chunk] = 0;
+				color_area_arr[nid][color].nr_allocated[chunk] = 0;
+			}
+			spin_lock_init(&color_area_arr[nid][color].lock);
+			color_area_arr[nid][color].preferred_list = 0;
+		}
+	}
+
+	for (pool = 0; pool < NR_PPOOLS; ++pool) {
+		struct private_color_pool *private_color_pool = &private_color_pool_arr[pool];
+		INIT_LIST_HEAD(&private_color_pool->free_list);
+		private_color_pool->nr_pages = 0;
+		spin_lock_init(&private_color_pool->lock);
+	}
+
+	captured_page = NULL;
+	spin_lock_init(&page_capture_lock);
+
+	for_each_online_node(nid)
+		printk("NUMA %d - node_start_pfn: %ld\n", nid, NODE_DATA(nid)->node_start_pfn);
+}
 
 /* Free Page Internal flags: for internal, non-pcp variants of free_pages(). */
 typedef int __bitwise fpi_t;
@@ -1632,6 +2256,21 @@ static void __free_pages_ok(struct page *page, unsigned int order,
 
 	migratetype = get_pfnblock_migratetype(page, pfn);
 
+	__count_vm_events(PGFREE, 1 << order);
+	if (PageCapture(page)) {
+		if (try_capture_page(page, order))
+			return;
+	}
+	if (PagePpooled(page)) {
+		free_ppool_page(page);
+		return;
+	}
+	if (PageColored(page)) {
+		prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0), 0);
+		atomic_insert_free_color_page(page);
+		return;
+	}
+
 	spin_lock_irqsave(&zone->lock, flags);
 	if (unlikely(has_isolate_pageblock(zone) ||
 		is_migrate_isolate(migratetype))) {
@@ -1639,8 +2278,6 @@ static void __free_pages_ok(struct page *page, unsigned int order,
 	}
 	__free_one_page(page, pfn, zone, order, migratetype, fpi_flags);
 	spin_unlock_irqrestore(&zone->lock, flags);
-
-	__count_vm_events(PGFREE, 1 << order);
 }
 
 void __free_pages_core(struct page *page, unsigned int order)
@@ -3405,6 +4042,20 @@ static void free_unref_page_commit(struct page *page, int migratetype,
 	bool free_high;
 
 	__count_vm_event(PGFREE);
+	if (PageCapture(page)) {
+		if (try_capture_page(page, order))
+			return;
+	}
+	if (PagePpooled(page)) {
+		free_ppool_page(page);
+		return;
+	}
+	if (PageColored(page)) {
+		prep_new_page(page, COLOR_PAGE_ORDER, __GFP_HIGHMEM | (COLOR_PAGE_ORDER > 0 ? __GFP_COMP : 0), 0);
+		atomic_insert_free_color_page(page);
+		return;
+	}
+
 	pcp = this_cpu_ptr(zone->per_cpu_pageset);
 	pindex = order_to_pindex(migratetype, order);
 	list_add(&page->lru, &pcp->lists[pindex]);
@@ -5391,13 +6042,46 @@ EXPORT_SYMBOL_GPL(__alloc_pages_bulk);
 /*
  * This is the 'heart' of the zoned buddy allocator.
  */
-struct page *__alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
-							nodemask_t *nodemask)
+struct page *___alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
+	nodemask_t *nodemask, int *preferred_color, colormask_t *colormask, bool use_ppool, int ppool)
 {
 	struct page *page;
 	unsigned int alloc_flags = ALLOC_WMARK_LOW;
 	gfp_t alloc_gfp; /* The gfp_t that was actually used for allocation */
 	struct alloc_context ac = { };
+
+	if ((gfp & GFP_COLOR) == GFP_COLOR
+	    && order == COLOR_PAGE_ORDER
+	    && use_ppool) {
+		page = alloc_ppool_page(ppool);
+		if (page) {
+			goto out;
+		} else {
+			trace_printk("alloc_ppool_page: failed to allocate a page from pool %d, fall back to the normal path\n", ppool);
+		}
+	}
+
+	if ((gfp & GFP_COLOR) == GFP_COLOR
+	    && order == COLOR_PAGE_ORDER
+	    && colormask_weight(colormask) < NR_COLORS
+	    && colormask_weight(colormask) > 0) {
+		/* assumption: one thread never trigger multiple page faults simultaneously */
+		page = alloc_color_page(nodemask ? nodemask : &node_states[N_MEMORY],
+		                        preferred_nid,
+		                        colormask,
+		                        *preferred_color);
+		if (page) {
+			int next_color = colormask_next(get_page_color(page), colormask);
+			if (next_color == NR_COLORS)
+				next_color = colormask_first(colormask);
+			if (next_color == NR_COLORS)
+				next_color = 0;
+			*preferred_color = next_color;
+			goto out;
+		} else {
+			printk_once("alloc_color_page: failed to allocate a page, fall back to the normal path\n");
+		}
+	}
 
 	/*
 	 * There are several places where we assume that the order value is sane
@@ -5453,7 +6137,29 @@ out:
 
 	return page;
 }
+
+struct page *
+__alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid, nodemask_t *nodemask)
+{
+	return ___alloc_pages(gfp, order, preferred_nid,
+			nodemask,
+			current ? &current->preferred_color : 0,
+			current ? &current->colors_allowed : color_all_mask,
+			current ? current->use_ppool : false,
+			current ? current->ppool : 0);
+}
 EXPORT_SYMBOL(__alloc_pages);
+
+struct folio *___folio_alloc(gfp_t gfp, unsigned int order, int preferred_nid,
+		nodemask_t *nodemask, int *preferred_color, colormask_t *colormask, bool use_ppool, int ppool)
+{
+	struct page *page = ___alloc_pages(gfp | __GFP_COMP, order,
+			preferred_nid, nodemask, preferred_color, colormask, use_ppool, ppool);
+
+	if (page && order > 1)
+		prep_transhuge_page(page);
+	return (struct folio *)page;
+}
 
 struct folio *__folio_alloc(gfp_t gfp, unsigned int order, int preferred_nid,
 		nodemask_t *nodemask)

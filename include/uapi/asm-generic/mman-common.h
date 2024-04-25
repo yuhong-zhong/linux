@@ -77,6 +77,10 @@
 
 #define MADV_DONTNEED_LOCKED	24	/* like DONTNEED, but drop locked pages too */
 
+#define MADV_NO_PPOOL	40
+#define MADV_PPOOL_0	41
+// #define MADV_PPOOL_1	42
+
 /* compatibility flags */
 #define MAP_FILE	0
 

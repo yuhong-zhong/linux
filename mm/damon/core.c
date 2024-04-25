@@ -648,9 +648,10 @@ static void kdamond_reset_aggregated(struct damon_ctx *c)
 
 	damon_for_each_target(t, c) {
 		struct damon_region *r;
+		unsigned long ri = 0;
 
 		damon_for_each_region(r, t) {
-			trace_damon_aggregated(t, ti, r, damon_nr_regions(t));
+			trace_damon_aggregated(t, ti, r, damon_nr_regions(t), ri++, timespec64_to_ns(&c->last_aggregation));
 			r->last_nr_accesses = r->nr_accesses;
 			r->nr_accesses = 0;
 		}
@@ -1186,6 +1187,15 @@ static int kdamond_fn(void *data)
 			kdamond_split_regions(ctx);
 			if (ctx->ops.reset_aggregated)
 				ctx->ops.reset_aggregated(ctx);
+		} else {
+			// Aggressive region splitting
+			unsigned int nr_regions = 0;
+			struct damon_target *t;
+
+			damon_for_each_target(t, ctx)
+				nr_regions += damon_nr_regions(t);
+			if (nr_regions < ctx->min_nr_regions)
+				kdamond_split_regions(ctx);
 		}
 
 		if (kdamond_need_update_operations(ctx)) {
